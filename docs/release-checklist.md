@@ -8,7 +8,7 @@
 - [ ] `./scripts/verify-public-release.sh` passes.
 - [ ] `./scripts/verify-integration.sh` passes with zero skips and retries.
 - [ ] Dependency vulnerability and licence checks pass.
-- [ ] Gitleaks scans the candidate tree and complete proposed public history.
+- [ ] Gitleaks scans the candidate tree and the complete proposed public history.
 - [ ] `./scripts/verify-release-history.sh v<version>` proves clean ancestry
       from the exact sanitized public root and an exact version tag.
 - [ ] Fresh synthetic quickstarts pass from disposable clones.
