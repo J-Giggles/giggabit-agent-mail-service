@@ -1,0 +1,2 @@
+#!/bin/sh
+exec pkexec /usr/local/libexec/giggabit-agent-mail-service-admin-root "$@"

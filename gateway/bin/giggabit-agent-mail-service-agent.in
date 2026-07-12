@@ -1,0 +1,4 @@
+#!/bin/sh
+exec @NODE_BIN@ /opt/giggabit-agent-mail-service/dist/launcher-main.js \
+  --url "http://@TAILSCALE_IP@:45873" \
+  --enrollment-socket /run/giggabit-agent-mail-service/identity.sock "$@"

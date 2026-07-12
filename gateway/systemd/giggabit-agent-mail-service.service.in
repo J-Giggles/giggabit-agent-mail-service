@@ -1,0 +1,29 @@
+[Unit]
+Description=Giggabit Agent Mail Service
+Documentation=file:///opt/giggabit-agent-mail-service/README.md
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@RUNTIME_USER@
+Group=@RUNTIME_GROUP@
+UMask=0077
+StateDirectory=giggabit-agent-mail-service
+StateDirectoryMode=0700
+RuntimeDirectory=giggabit-agent-mail-service
+RuntimeDirectoryMode=0700
+LoadCredentialEncrypted=mail-vault-master:/etc/credstore.encrypted/giggabit-agent-mail-service-vault-master
+ExecStart=/opt/giggabit-agent-mail-service/bin/giggabit-agent-mail-service --state-dir /var/lib/giggabit-agent-mail-service --runtime-dir /run/giggabit-agent-mail-service --host @TAILSCALE_IP@ --port 45873 --operator-config /etc/giggabit-agent-mail-service/operator.json
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/giggabit-agent-mail-service /run/giggabit-agent-mail-service
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

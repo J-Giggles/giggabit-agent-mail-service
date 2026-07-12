@@ -1,0 +1,22 @@
+#!/bin/sh
+set -u
+was_active=no
+if systemctl is-active --quiet giggabit-agent-mail-service.service; then
+  was_active=yes
+  systemctl stop giggabit-agent-mail-service.service
+fi
+restart_service() {
+  if [ "$was_active" = yes ]; then
+    systemctl start giggabit-agent-mail-service.service
+  fi
+}
+trap restart_service EXIT
+systemd-run --system --quiet --pty --wait --collect \
+  -p "User=@RUNTIME_USER@" -p "Group=@RUNTIME_GROUP@" \
+  -p "LoadCredentialEncrypted=mail-vault-master:/etc/credstore.encrypted/giggabit-agent-mail-service-vault-master" \
+  @NODE_BIN@ /opt/giggabit-agent-mail-service/dist/admin-main.js "$@" \
+  --state-dir /var/lib/giggabit-agent-mail-service
+status=$?
+trap - EXIT
+restart_service
+exit "$status"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Complete Magic-Link Authentication"
+  short_description: "Complete safe mailbox-backed magic-link sign-in"
+  default_prompt: "Use $complete-magic-link-auth to complete an authorized staging magic-link sign-in safely."

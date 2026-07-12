@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose a user-facing capability or documentation improvement.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the operator or agent problem without private operational data.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security-boundary impact
+      description: Explain effects on identity, credentials, mail trust, sending, attachments, or network exposure.
+    validations:
+      required: true

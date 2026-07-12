@@ -1,0 +1,26 @@
+{
+  "name": "giggabit-agent-mail-service",
+  "version": "0.1.0",
+  "description": "Optional Codex integration for the tailnet-only Giggabit Agent Mail Service.",
+  "author": {
+    "name": "J-Giggles"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Giggabit Agent Mail Service",
+    "shortDescription": "Use explicitly connected mailboxes through the private agent mail service.",
+    "longDescription": "Lists, reads, organizes, and sends mail through the tailnet-only Giggabit Agent Mail Service. Agents receive short-lived identities and never receive mailbox credentials, OAuth refresh tokens, or host file paths.",
+    "developerName": "J-Giggles",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "List the mailboxes and folders I can access.",
+      "Find recent messages in my connected mailbox.",
+      "Draft an email, but do not send it until I ask."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

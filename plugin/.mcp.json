@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "giggabit-agent-mail-service": {
+      "command": "/usr/local/bin/giggabit-agent-mail-service-agent",
+      "args": []
+    }
+  }
+}

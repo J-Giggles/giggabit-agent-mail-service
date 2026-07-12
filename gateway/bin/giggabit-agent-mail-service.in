@@ -1,0 +1,2 @@
+#!/bin/sh
+exec @NODE_BIN@ /opt/giggabit-agent-mail-service/dist/service-main.js "$@"

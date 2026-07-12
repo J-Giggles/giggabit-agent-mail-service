@@ -1,0 +1,4 @@
+interface:
+  display_name: "Onboard Mailboxes"
+  short_description: "Connect operator-owned mailboxes safely"
+  default_prompt: "Use $onboard-mailboxes to connect and verify my mailbox without exposing credentials."
