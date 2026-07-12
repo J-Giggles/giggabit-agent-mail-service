@@ -9,7 +9,7 @@
 - [ ] `./scripts/verify-integration.sh` passes with zero skips and retries.
 - [ ] Dependency vulnerability and licence checks pass.
 - [ ] Gitleaks scans the candidate tree and the complete proposed public history.
-- [ ] `./scripts/verify-release-history.sh v<version>` proves clean ancestry
+- [ ] `VERSION="$(jq -r '.version' gateway/package.json)"; ./scripts/verify-release-history.sh "v${VERSION}"` proves clean ancestry
       from the exact sanitized public root and an exact version tag.
 - [ ] Fresh synthetic quickstarts pass from disposable clones.
 - [ ] No live mailbox, provider registration, or installed service was used.
@@ -27,7 +27,8 @@
 - [ ] Default branch is `main` and branch protection is enabled.
 - [ ] Issues and GitHub Private Vulnerability Reporting are enabled.
 - [ ] CI and CodeQL pass on the exact public commit.
-- [ ] Tag `v<version>` points to that commit.
+- [ ] The tag is exactly `v` followed by the version in `gateway/package.json`
+      and points to that commit.
 - [ ] An unauthenticated fresh clone completes the documented quickstart.
 
 Publication stops on any failed, skipped, retried, stale, or secret-bearing
