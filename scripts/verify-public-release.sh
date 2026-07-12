@@ -30,6 +30,7 @@ required_files=(
   docs/release-checklist.md
   docs/dependencies.md
   scripts/install.sh
+  scripts/quickstart.sh
   scripts/doctor.sh
   scripts/upgrade.sh
   scripts/uninstall.sh
@@ -37,6 +38,8 @@ required_files=(
   scripts/check-markdown-links.mjs
   scripts/verify-built-launcher.mjs
   scripts/check-licenses.mjs
+  scripts/check-release-metadata.mjs
+  scripts/require-commands.sh
   scripts/version-policy.mjs
   scripts/verify-release-history.sh
   .github/workflows/ci.yml
@@ -55,6 +58,9 @@ for file in "${required_files[@]}"; do
     failures=$((failures + 1))
   fi
 done
+
+./scripts/require-commands.sh bash git jq node rg shellcheck
+release_version="$(node ./scripts/check-release-metadata.mjs)"
 
 disallowed_paths=(
   HANDOFF.md
@@ -92,9 +98,9 @@ for pattern in "${private_patterns[@]}"; do
   fi
 done
 
-if ! jq -e '
+if ! jq -e --arg version "$release_version" '
   .name == "@giggabit/agent-mail-service" and
-  .version == "0.1.0" and
+  .version == $version and
   .private == true and
   .license == "Apache-2.0" and
   .repository.url == "git+https://github.com/J-Giggles/giggabit-agent-mail-service.git" and
@@ -124,9 +130,9 @@ if ((${#provider_identifier_files[@]})); then
   failures=$((failures + 1))
 fi
 
-if ! jq -e '
+if ! jq -e --arg version "$release_version" '
   .name == "giggabit-agent-mail-service" and
-  .version == "0.1.0" and
+  .version == $version and
   .author.name == "J-Giggles" and
   (.description | contains("private") | not)
 ' plugin/.codex-plugin/plugin.json >/dev/null; then
@@ -146,9 +152,7 @@ done
 node ./scripts/check-markdown-links.mjs
 node ./scripts/check-licenses.mjs
 
-if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck scripts/*.sh gateway/scripts/*.sh gateway/bin/*.in
-fi
+shellcheck scripts/*.sh gateway/scripts/*.sh gateway/bin/*.in
 
 if rg -n 'uses:\s+[^@]+@(?![0-9a-f]{40}(?:\s|$))' .github/workflows --pcre2; then
   echo 'GitHub Actions must be pinned to full commit SHAs' >&2

@@ -110,11 +110,11 @@ function sameAddress(actual: string, expected: string): boolean {
 
 function decodeHtmlAttribute(value: string): string {
   return value
-    .replaceAll("&amp;", "&")
     .replaceAll("&quot;", '"')
     .replaceAll("&#39;", "'")
     .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">");
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
 }
 
 function oneExpectedHttpsLink(text: string, html: string | undefined, expectedHostname: string): string {

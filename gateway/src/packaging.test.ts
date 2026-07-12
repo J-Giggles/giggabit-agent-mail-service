@@ -7,6 +7,16 @@ import { describe, expect, it } from "vitest";
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("system package templates", () => {
+  it("does not ship unused HTML sanitizer code in the trusted gateway", async () => {
+    const manifest = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+      devDependencies: Record<string, string>;
+    };
+
+    expect(manifest.dependencies).not.toHaveProperty("sanitize-html");
+    expect(manifest.devDependencies).not.toHaveProperty("@types/sanitize-html");
+  });
+
   it("runs every installed runtime entrypoint from the root-owned /opt payload", async () => {
     const templates = await Promise.all(
       [

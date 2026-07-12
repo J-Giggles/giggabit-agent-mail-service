@@ -25,6 +25,13 @@ required_files=(
   "scripts/upgrade.sh"
   "scripts/uninstall.sh"
   "scripts/lifecycle.test.sh"
+  "scripts/quickstart.sh"
+  "scripts/quickstart.test.sh"
+  "scripts/check-release-metadata.mjs"
+  "scripts/release-metadata.test.mjs"
+  "scripts/release-verification.test.sh"
+  "scripts/require-commands.sh"
+  "scripts/verification-tools.test.sh"
   "scripts/verify-integration.sh"
   "scripts/verify-mcp-initialize.mjs"
   "scripts/verify-built-launcher.mjs"
@@ -36,6 +43,8 @@ for file in "${required_files[@]}"; do
     exit 1
   }
 done
+
+"$repo_root/scripts/require-commands.sh" bash bun cp find git grep jq mktemp node rg rm sh
 
 if find "$repo_root" -type f \( \
   -name '*.sqlite' -o -name '*.sqlite-*' -o -name '*.db' -o -name '*.db-*' -o \
@@ -98,6 +107,10 @@ grep -q '^name: complete-magic-link-auth$' \
   "$repo_root/plugin/skills/complete-magic-link-auth/SKILL.md"
 
 "$repo_root/scripts/lifecycle.test.sh"
+"$repo_root/scripts/quickstart.test.sh"
+node "$repo_root/scripts/release-metadata.test.mjs"
+"$repo_root/scripts/release-verification.test.sh"
+"$repo_root/scripts/verification-tools.test.sh"
 
 cd "$repo_root/gateway"
 bun install --frozen-lockfile

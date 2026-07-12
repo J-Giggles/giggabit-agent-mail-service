@@ -15,6 +15,13 @@ const magicLinkPolicy = {
   ],
 };
 
+const weakRsaPublicKey = `-----BEGIN PUBLIC KEY-----
+MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDob1iT881srvvUkGikGbV8Z57L
+i16z/jqMJ7D6uayt+hhST+ETCo0RW8ouKV4cUoQcNMMhHNhE6DYCgZjY+LLd8sX8
+Xf8MwFosctLoDHBI44RPew21p77yddM0zRbryJ4n0Ip+FMej0wy/v8+2ON4DRML+
+GAn0c5wnv+93h4DZAwIDAQAB
+-----END PUBLIC KEY-----`;
+
 function decryptMagicLink(result: Record<string, unknown>, privateKey: KeyObject): string {
   const contentKey = privateDecrypt(
     { key: privateKey, padding: constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha256" },
@@ -171,6 +178,52 @@ describe("Magic-link claim gateway seam", () => {
     expect(JSON.stringify(result)).not.toContain("html-secret");
     expect(decryptMagicLink(result, privateKey)).toBe(
       "https://staging.example.invalid/auth/callback?token=html-secret&next=%2Fhome",
+    );
+  });
+
+  it("decodes exactly one HTML entity layer in a bearer URL", async () => {
+    const detail = {
+      messageRef: "INBOX:encoded-html",
+      folder: "INBOX",
+      subject: "Sign in",
+      from: "login@example.invalid",
+      to: ["test-alias@example.invalid"],
+      receivedAt: "2026-07-12T07:59:30.000Z",
+      text: "",
+      html: '<a href="https://staging.example.invalid/auth/callback?token=double&amp;quot;encoded">Continue</a>',
+      attachments: [],
+    } satisfies MailMessageDetail & { html: string };
+    const provider: MailboxProvider = {
+      grant: { grantId: "mailbox-1", label: "Test mailbox", provider: "fake" },
+      listFolders: async () => [],
+      search: async () => [{ ...detail, snippet: "Continue" }],
+      read: async () => detail,
+    };
+    const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const gateway = new HostMailGateway({
+      providers: [provider],
+      audit: () => undefined,
+      magicLinkPolicy,
+      now: () => new Date("2026-07-12T08:00:00.000Z"),
+    });
+
+    const result = await gateway.callTool(
+      { tokenId: "token-encoded", runId: "run-encoded", nodeId: "node-1", expiresAt: "2026-07-12T09:00:00.000Z" },
+      "magic_link",
+      {
+        action: "claim",
+        grant_id: "mailbox-1",
+        attempt_id: "attempt-encoded",
+        request_time: "2026-07-12T07:59:00.000Z",
+        recipient_alias: "test-alias@example.invalid",
+        expected_sender: "login@example.invalid",
+        expected_hostname: "staging.example.invalid",
+        public_key: publicKey.export({ type: "spki", format: "pem" }).toString(),
+      },
+    );
+
+    expect(decryptMagicLink(result, privateKey)).toBe(
+      "https://staging.example.invalid/auth/callback?token=double&quot;encoded",
     );
   });
 
@@ -487,7 +540,6 @@ describe("Magic-link claim gateway seam", () => {
       search: async () => [{ ...detail, snippet: "Sign in" }],
       read: async () => detail,
     };
-    const { publicKey } = generateKeyPairSync("rsa", { modulusLength: 1024 });
     const gateway = new HostMailGateway({ providers: [provider], audit: () => undefined, magicLinkPolicy });
 
     await expect(
@@ -502,7 +554,7 @@ describe("Magic-link claim gateway seam", () => {
           recipient_alias: "test-alias@example.invalid",
           expected_sender: "login@example.invalid",
           expected_hostname: "staging.example.invalid",
-          public_key: publicKey.export({ type: "spki", format: "pem" }).toString(),
+          public_key: weakRsaPublicKey,
         },
       ),
     ).rejects.toThrow("public_key must be RSA-2048 or stronger");
