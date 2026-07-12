@@ -31,4 +31,11 @@ if (invalid.status === 0) {
   throw new Error("non-semver release versions should fail");
 }
 
+for (const invalidVersion of ["1.2.3-..", "1.2.3-01"]) {
+  const malformed = check(invalidVersion, invalidVersion);
+  if (malformed.status === 0) {
+    throw new Error(`invalid semantic version passed: ${invalidVersion}`);
+  }
+}
+
 process.stdout.write("Release metadata behavior passed.\n");

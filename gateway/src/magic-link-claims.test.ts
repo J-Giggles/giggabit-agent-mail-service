@@ -39,6 +39,48 @@ function decryptMagicLink(result: Record<string, unknown>, privateKey: KeyObject
   ]).toString("utf8");
 }
 
+async function claimHtmlLink(html: string, suffix: string) {
+  const detail = {
+    messageRef: `INBOX:${suffix}`,
+    folder: "INBOX",
+    subject: "Sign in",
+    from: "login@example.invalid",
+    to: ["test-alias@example.invalid"],
+    receivedAt: "2026-07-12T07:59:30.000Z",
+    text: "",
+    html,
+    attachments: [],
+  } satisfies MailMessageDetail & { html: string };
+  const provider: MailboxProvider = {
+    grant: { grantId: "mailbox-1", label: "Test mailbox", provider: "fake" },
+    listFolders: async () => [],
+    search: async () => [{ ...detail, snippet: "Continue" }],
+    read: async () => detail,
+  };
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const gateway = new HostMailGateway({
+    providers: [provider],
+    audit: () => undefined,
+    magicLinkPolicy,
+    now: () => new Date("2026-07-12T08:00:00.000Z"),
+  });
+  const result = await gateway.callTool(
+    { tokenId: `token-${suffix}`, runId: `run-${suffix}`, nodeId: "node-1", expiresAt: "2026-07-12T09:00:00.000Z" },
+    "magic_link",
+    {
+      action: "claim",
+      grant_id: "mailbox-1",
+      attempt_id: `attempt-${suffix}`,
+      request_time: "2026-07-12T07:59:00.000Z",
+      recipient_alias: "test-alias@example.invalid",
+      expected_sender: "login@example.invalid",
+      expected_hostname: "staging.example.invalid",
+      public_key: publicKey.export({ type: "spki", format: "pem" }).toString(),
+    },
+  );
+  return { result, decryptedUrl: decryptMagicLink(result, privateKey) };
+}
+
 describe("Magic-link claim gateway seam", () => {
   it("rejects a claim outside the operator sender and exact-host policy", async () => {
     const search = vi.fn(async () => []);
@@ -135,96 +177,22 @@ describe("Magic-link claim gateway seam", () => {
   });
 
   it("accepts an HTML-only link while keeping the link out of the tool result", async () => {
-    const detail = {
-      messageRef: "INBOX:html",
-      folder: "INBOX",
-      subject: "Sign in",
-      from: "login@example.invalid",
-      to: ["test-alias@example.invalid"],
-      receivedAt: "2026-07-12T07:59:30.000Z",
-      text: "",
-      html: '<p><a href="https://staging.example.invalid/auth/callback?token=html-secret&amp;next=%2Fhome">Continue</a></p>',
-      attachments: [],
-    } satisfies MailMessageDetail & { html: string };
-    const provider: MailboxProvider = {
-      grant: { grantId: "mailbox-1", label: "Test mailbox", provider: "fake" },
-      listFolders: async () => [],
-      search: async () => [{ ...detail, snippet: "Continue" }],
-      read: async () => detail,
-    };
-    const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const gateway = new HostMailGateway({
-      providers: [provider],
-      audit: () => undefined,
-      magicLinkPolicy,
-      now: () => new Date("2026-07-12T08:00:00.000Z"),
-    });
-
-    const result = await gateway.callTool(
-      { tokenId: "token-1", runId: "run-html", nodeId: "node-1", expiresAt: "2026-07-12T09:00:00.000Z" },
-      "magic_link",
-      {
-        action: "claim",
-        grant_id: "mailbox-1",
-        attempt_id: "attempt-html",
-        request_time: "2026-07-12T07:59:00.000Z",
-        recipient_alias: "test-alias@example.invalid",
-        expected_sender: "login@example.invalid",
-        expected_hostname: "staging.example.invalid",
-        public_key: publicKey.export({ type: "spki", format: "pem" }).toString(),
-      },
+    const { result, decryptedUrl } = await claimHtmlLink(
+      '<p><a href="https://staging.example.invalid/auth/callback?token=html-secret&amp;next=%2Fhome">Continue</a></p>',
+      "html",
     );
 
     expect(JSON.stringify(result)).not.toContain("html-secret");
-    expect(decryptMagicLink(result, privateKey)).toBe(
-      "https://staging.example.invalid/auth/callback?token=html-secret&next=%2Fhome",
-    );
+    expect(decryptedUrl).toBe("https://staging.example.invalid/auth/callback?token=html-secret&next=%2Fhome");
   });
 
   it("decodes exactly one HTML entity layer in a bearer URL", async () => {
-    const detail = {
-      messageRef: "INBOX:encoded-html",
-      folder: "INBOX",
-      subject: "Sign in",
-      from: "login@example.invalid",
-      to: ["test-alias@example.invalid"],
-      receivedAt: "2026-07-12T07:59:30.000Z",
-      text: "",
-      html: '<a href="https://staging.example.invalid/auth/callback?token=double&amp;quot;encoded">Continue</a>',
-      attachments: [],
-    } satisfies MailMessageDetail & { html: string };
-    const provider: MailboxProvider = {
-      grant: { grantId: "mailbox-1", label: "Test mailbox", provider: "fake" },
-      listFolders: async () => [],
-      search: async () => [{ ...detail, snippet: "Continue" }],
-      read: async () => detail,
-    };
-    const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-    const gateway = new HostMailGateway({
-      providers: [provider],
-      audit: () => undefined,
-      magicLinkPolicy,
-      now: () => new Date("2026-07-12T08:00:00.000Z"),
-    });
-
-    const result = await gateway.callTool(
-      { tokenId: "token-encoded", runId: "run-encoded", nodeId: "node-1", expiresAt: "2026-07-12T09:00:00.000Z" },
-      "magic_link",
-      {
-        action: "claim",
-        grant_id: "mailbox-1",
-        attempt_id: "attempt-encoded",
-        request_time: "2026-07-12T07:59:00.000Z",
-        recipient_alias: "test-alias@example.invalid",
-        expected_sender: "login@example.invalid",
-        expected_hostname: "staging.example.invalid",
-        public_key: publicKey.export({ type: "spki", format: "pem" }).toString(),
-      },
+    const { decryptedUrl } = await claimHtmlLink(
+      '<a href="https://staging.example.invalid/auth/callback?token=double&amp;quot;encoded">Continue</a>',
+      "encoded-html",
     );
 
-    expect(decryptMagicLink(result, privateKey)).toBe(
-      "https://staging.example.invalid/auth/callback?token=double&quot;encoded",
-    );
+    expect(decryptedUrl).toBe("https://staging.example.invalid/auth/callback?token=double&quot;encoded");
   });
 
   it("prevents two agent runs from claiming the same message", async () => {

@@ -31,6 +31,8 @@ required_files=(
   docs/dependencies.md
   scripts/install.sh
   scripts/quickstart.sh
+  scripts/quickstart.integration.test.sh
+  scripts/synthetic-fixture.sh
   scripts/doctor.sh
   scripts/upgrade.sh
   scripts/uninstall.sh

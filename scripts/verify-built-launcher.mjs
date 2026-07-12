@@ -16,6 +16,7 @@ import { GatewayMcpHandler } from "../gateway/dist/mcp-handler.js";
 
 const root = resolve(import.meta.dirname, "..");
 const plugin = JSON.parse(await readFile(join(root, "plugin/.mcp.json"), "utf8"));
+const expectedVersion = JSON.parse(await readFile(join(root, "gateway/package.json"), "utf8")).version;
 const command = plugin.mcpServers?.["giggabit-agent-mail-service"]?.command;
 if (basename(command ?? "") !== "giggabit-agent-mail-service-agent") {
   throw new Error("Codex integration does not select the protected launcher");
@@ -92,7 +93,7 @@ try {
     response.jsonrpc !== "2.0" ||
     response.id !== 1 ||
     response.result?.serverInfo?.name !== "giggabit-agent-mail-service" ||
-    response.result?.serverInfo?.version !== "0.1.0"
+    response.result?.serverInfo?.version !== expectedVersion
   ) {
     throw new Error("built launcher initialize response was invalid");
   }

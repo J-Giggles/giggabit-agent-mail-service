@@ -28,7 +28,9 @@ jobs:
       - name: Install verification tools
         run: sudo apt-get update && sudo apt-get install -y jq ripgrep shellcheck
       - name: Pull pinned synthetic mail fixture
-        run: docker pull greenmail/standalone:2.1.9
+        run: |
+          source ./scripts/synthetic-fixture.sh
+          docker pull "$SYNTHETIC_MAIL_IMAGE"
       - name: Require independently verified exact SHA
         env:
           VERIFIED_SHA: ${{ vars.VERIFIED_SHA }}
@@ -37,9 +39,8 @@ jobs:
           test "$VERIFIED_SHA" = "$(git rev-parse HEAD)"
       - name: Verify release candidate
         run: |
-          ./scripts/verify.sh
           ./scripts/verify-public-release.sh
-          ./scripts/verify-integration.sh
+          ./scripts/quickstart.integration.test.sh
           ./scripts/verify-release-history.sh "$GITHUB_REF_NAME"
           cd gateway && bun audit
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2

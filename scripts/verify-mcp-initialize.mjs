@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const command = "/usr/local/bin/giggabit-agent-mail-service-agent";
 const expectedName = "giggabit-agent-mail-service";
-const expectedVersion = "0.1.0";
+const expectedVersion = JSON.parse(
+  readFileSync(new URL("../gateway/package.json", import.meta.url), "utf8"),
+).version;
 const timeoutMs = 15_000;
 
 const child = spawn(command, [], { stdio: ["pipe", "pipe", "pipe"] });

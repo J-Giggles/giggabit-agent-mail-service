@@ -58,10 +58,8 @@ jobs:
           node-version: 24.18.0
       - name: Install integration tools
         run: sudo apt-get update && sudo apt-get install -y jq ripgrep
-      - name: Pull pinned synthetic mail fixture
-        run: docker pull greenmail/standalone:2.1.9
-      - name: Run zero-skip synthetic integration
-        run: ./scripts/verify-integration.sh
+      - name: Run zero-skip synthetic quickstart and cleanup
+        run: ./scripts/quickstart.integration.test.sh
 
   secrets:
     runs-on: ubuntu-24.04

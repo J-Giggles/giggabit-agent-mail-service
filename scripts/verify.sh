@@ -27,6 +27,8 @@ required_files=(
   "scripts/lifecycle.test.sh"
   "scripts/quickstart.sh"
   "scripts/quickstart.test.sh"
+  "scripts/quickstart.integration.test.sh"
+  "scripts/synthetic-fixture.sh"
   "scripts/check-release-metadata.mjs"
   "scripts/release-metadata.test.mjs"
   "scripts/release-verification.test.sh"
