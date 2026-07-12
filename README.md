@@ -32,19 +32,20 @@ Read [the threat model](docs/threat-model.md) before connecting a real mailbox.
 
 ## Quick evaluation with synthetic mail
 
-Prerequisites: Git, Bun 1.3+, Node.js 24.18+, jq, and Docker.
+Prerequisites: Git, Bun 1.3+, Node.js 24.18+, jq, ripgrep, and Docker.
 
 ```bash
 git clone https://github.com/J-Giggles/giggabit-agent-mail-service.git
 cd giggabit-agent-mail-service
-./scripts/synthetic-environment.sh up
-./scripts/verify.sh
-./scripts/synthetic-environment.sh down
+./scripts/quickstart.sh --dry-run
+./scripts/quickstart.sh
 ```
 
-The synthetic environment binds only to loopback and cannot access a real
-Mailbox Grant. See [the agent quickstart](docs/agent-quickstart.md) for a
-machine-readable path through the repository.
+The quickstart runs all tests against a pinned loopback-only GreenMail fixture,
+allows no skipped integration tests or retries, removes its container even on
+failure, and cannot access a real Mailbox Grant. See
+[the agent quickstart](docs/agent-quickstart.md) for a machine-readable path
+through the repository.
 
 ## Install a Production Host
 

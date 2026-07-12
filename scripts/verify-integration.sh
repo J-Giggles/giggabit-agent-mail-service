@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image="greenmail/standalone:2.1.9"
+source "$repo_root/scripts/synthetic-fixture.sh"
 container="giggabit-agent-mail-service-verify-$$"
 installed_service=no
 case "${1:-}" in
@@ -16,9 +16,9 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-if ! docker image inspect "$image" >/dev/null 2>&1; then
-  echo "Missing pinned synthetic mail image: $image" >&2
-  echo "Install it explicitly with: docker pull $image" >&2
+if ! docker image inspect "$SYNTHETIC_MAIL_IMAGE" >/dev/null 2>&1; then
+  echo "Missing pinned synthetic mail image: $SYNTHETIC_MAIL_IMAGE" >&2
+  echo "Install it explicitly with: docker pull $SYNTHETIC_MAIL_IMAGE" >&2
   exit 1
 fi
 
@@ -26,7 +26,7 @@ docker run -d --rm --name "$container" \
   -e 'GREENMAIL_OPTS=-Dgreenmail.setup.test.smtp -Dgreenmail.setup.test.imap -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.users=test1:pwd1@localhost' \
   -p 127.0.0.1::3025 \
   -p 127.0.0.1::3143 \
-  "$image" >/dev/null
+  "$SYNTHETIC_MAIL_IMAGE" >/dev/null
 
 smtp_address="$(docker port "$container" 3025/tcp)"
 imap_address="$(docker port "$container" 3143/tcp)"

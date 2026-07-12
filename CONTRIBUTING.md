@@ -6,11 +6,12 @@ to a pull request.
 
 ## Development
 
-1. Install Bun 1.3 or newer, Node.js 24.18 or newer, jq, and Docker.
-2. Run `./scripts/synthetic-environment.sh up`.
-3. Run `./scripts/verify.sh`.
+1. Install Bun 1.3 or newer, Node.js 24.18 or newer, jq, ripgrep,
+   ShellCheck, and Docker.
+2. Run `./scripts/quickstart.sh --dry-run`.
+3. Run `./scripts/quickstart.sh`.
 4. Run `./scripts/verify-public-release.sh`.
-5. Run `./scripts/synthetic-environment.sh down` when finished.
+5. Confirm Docker has no leftover verification containers or networks.
 
 Tests use only synthetic fixtures. Never use a real mailbox, provider token,
 message, attachment, runtime database, or host diagnostic as a fixture.

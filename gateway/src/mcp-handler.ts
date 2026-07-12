@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { HostMailGateway } from "./gateway.js";
 import type { AgentIdentityAuthority, AgentPrincipal } from "./identity.js";
+import { packageVersion } from "./package-version.js";
 
 export interface TailnetIdentityVerifier {
   identify(peerIp: string): Promise<{ nodeId: string }>;
@@ -138,7 +139,7 @@ export class GatewayMcpHandler {
       return unauthorized();
     }
 
-    const server = new McpServer({ name: "giggabit-agent-mail-service", version: "0.1.0" });
+    const server = new McpServer({ name: "giggabit-agent-mail-service", version: packageVersion });
     registerGatewayTools(server, this.#gateway, principal);
     const transport = new WebStandardStreamableHTTPServerTransport({
       enableJsonResponse: true,

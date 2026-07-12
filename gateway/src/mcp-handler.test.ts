@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { HostMailGateway } from "./gateway.js";
 import { AgentIdentityAuthority, signAgentRequest } from "./identity.js";
 import { GatewayMcpHandler } from "./mcp-handler.js";
+import { packageVersion } from "./package-version.js";
 import type { MailboxProvider } from "./provider.js";
 
 describe("Gateway Streamable HTTP MCP seam", () => {
@@ -77,7 +78,9 @@ describe("Gateway Streamable HTTP MCP seam", () => {
       "100.114.48.17",
     );
     expect(accepted.status).toBe(200);
-    await expect(accepted.text()).resolves.toContain('"name":"giggabit-agent-mail-service"');
+    await expect(accepted.json()).resolves.toMatchObject({
+      result: { serverInfo: { name: "giggabit-agent-mail-service", version: packageVersion } },
+    });
   });
 
   it("advertises the magic-link tool only when operator policy enables it", async () => {
