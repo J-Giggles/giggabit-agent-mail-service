@@ -1,5 +1,7 @@
 # Giggabit Agent Mail Service
 
+[![CI](https://github.com/J-Giggles/giggabit-agent-mail-service/actions/workflows/ci.yml/badge.svg)](https://github.com/J-Giggles/giggabit-agent-mail-service/actions/workflows/ci.yml)
+
 A self-hosted, tailnet-only MCP gateway that lets trusted local agent runs use
 explicitly connected mailboxes without receiving provider credentials.
 
@@ -87,11 +89,40 @@ tenancy, consent, quotas, or account support.
 
 ## Development and verification
 
+### Running CI checks locally
+
+The same checks that run in CI can be executed locally:
+
 ```bash
-./scripts/verify.sh
-./scripts/verify-public-release.sh
-./scripts/verify-integration.sh
-node ./scripts/check-licenses.mjs
+# Run all CI checks at once (recommended before pushing)
+./scripts/check-all.sh
+
+# Or run individual checks:
+
+# Typecheck, test, and build (gateway TypeScript)
+cd gateway
+bun install --frozen-lockfile
+bun run check        # Runs: tsc --noEmit && vitest run
+bun run build        # Compiles TypeScript
+
+# Full verification suite
+./scripts/verify.sh                    # Portable source, tests, build, credential scan
+./scripts/verify-public-release.sh     # Shellcheck, metadata, link checks
+./scripts/verify-integration.sh        # Docker compose integration tests (requires Docker)
+node ./scripts/check-licenses.mjs      # License compliance check
+```
+
+### Quick development workflow
+
+```bash
+# Quick local testing with synthetic mail (requires Docker)
+./scripts/quickstart.sh --dry-run      # Preview what will run
+./scripts/quickstart.sh                # Full integration test with synthetic mail server
+
+# Watch mode during development
+cd gateway
+bun run test:watch                     # Interactive test runner
+bun run typecheck                      # Type checking only
 ```
 
 The strict integration gate uses only the pinned loopback GreenMail fixture,
