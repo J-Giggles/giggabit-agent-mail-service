@@ -22,6 +22,16 @@
   "engines": {
     "node": ">=24.18.0"
   },
+  "overrides": {
+    "@hono/node-server": ">=1.19.15",
+    "fast-uri": ">=3.1.6",
+    "hono": ">=4.13.5",
+    "ip-address": ">=10.3.1",
+    "nanoid": ">=3.3.18",
+    "nodemailer": "9.1.1",
+    "postcss": ">=8.5.23",
+    "qs": ">=6.16.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit && vitest run",
@@ -30,17 +40,17 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "imapflow": "1.4.7",
-    "mailparser": "3.9.14",
-    "nodemailer": "9.0.3",
-    "zod": "4.4.3"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "imapflow": "1.7.6",
+    "mailparser": "3.9.17",
+    "nodemailer": "9.1.1",
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@types/mailparser": "3.4.6",
-    "@types/node": "26.1.1",
-    "@types/nodemailer": "6.4.24",
+    "@types/node": "26.4.0",
+    "@types/nodemailer": "8.0.1",
     "typescript": "7.0.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }

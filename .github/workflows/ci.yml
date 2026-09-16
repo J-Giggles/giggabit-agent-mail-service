@@ -25,10 +25,12 @@ jobs:
           node-version: 24.18.0
       - name: Install verification tools
         run: sudo apt-get update && sudo apt-get install -y jq ripgrep shellcheck
-      - name: Verify portable source
+      - name: Verify portable source (typecheck, test, build)
         run: ./scripts/verify.sh
-      - name: Verify public release surface
+        # Runs: tsc --noEmit, vitest run, tsc -p tsconfig.build.json, shell syntax checks
+      - name: Verify public release surface (shellcheck, metadata)
         run: ./scripts/verify-public-release.sh
+        # Runs: shellcheck, markdown link checks, license checks, metadata validation
       - name: Audit dependencies
         working-directory: gateway
         run: bun audit
@@ -60,6 +62,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq ripgrep
       - name: Run zero-skip synthetic quickstart and cleanup
         run: ./scripts/quickstart.integration.test.sh
+        # Runs: Docker compose integration tests with synthetic mail server
 
   secrets:
     runs-on: ubuntu-24.04
