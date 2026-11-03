@@ -28,7 +28,7 @@
     "hono": ">=4.13.5",
     "ip-address": ">=10.3.1",
     "nanoid": ">=3.3.18",
-    "nodemailer": "9.1.1",
+    "nodemailer": "10.3.1",
     "postcss": ">=8.5.23",
     "qs": ">=6.16.0"
   },
@@ -43,8 +43,8 @@
     "@modelcontextprotocol/sdk": "1.32.0",
     "imapflow": "2.2.4",
     "mailparser": "3.9.34",
-    "nodemailer": "10.0.14",
-    "zod": "4.6.5"
+    "nodemailer": "10.3.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/mailparser": "3.9.0",
