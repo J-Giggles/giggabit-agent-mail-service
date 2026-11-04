@@ -28,7 +28,7 @@
     "hono": ">=4.13.5",
     "ip-address": ">=10.3.1",
     "nanoid": ">=3.3.18",
-    "nodemailer": "9.1.1",
+    "nodemailer": "10.3.1",
     "postcss": ">=8.5.23",
     "qs": ">=6.16.0"
   },
@@ -40,17 +40,17 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
-    "imapflow": "1.7.6",
-    "mailparser": "3.9.17",
-    "nodemailer": "9.1.1",
-    "zod": "4.5.4"
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "imapflow": "2.2.4",
+    "mailparser": "3.9.34",
+    "nodemailer": "10.3.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@types/mailparser": "3.4.6",
-    "@types/node": "26.4.0",
+    "@types/mailparser": "3.9.0",
+    "@types/node": "26.6.4",
     "@types/nodemailer": "8.0.1",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "5.0.3"
   }
 }
