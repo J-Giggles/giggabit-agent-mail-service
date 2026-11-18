@@ -29,14 +29,18 @@ provider credentials, the vault key, host paths, or plaintext magic links.
 ## MCP tools
 
 - `folders`: list folders or create a folder for a connected mailbox grant.
-  Pass the path in `folder` and separate nested levels with `/`, as in
-  `Finance/Receipts`. Creating an existing folder succeeds and returns its
-  provider path for use in later mailbox operations. Each mailbox grant allows
-  up to 10 folder creation requests per elapsed minute across service restarts.
-  Creation requires one personal namespace with a single-character delimiter.
-  A nonempty prefix must end in exactly one delimiter and begin with another
-  character. If the server reports an existing folder with a different
-  spelling, use the exact path returned by `folders.list`.
+  For creation, pass a namespace-relative name in `folder`, such as
+  `Finance/Receipts`. Use `/` only to separate segments. Each segment starts
+  with an ASCII letter or digit, has at most 63 characters, and can contain
+  ASCII letters, digits, spaces, underscores, periods, and hyphens. A segment
+  cannot end in a space. Repeating an exact create succeeds and returns the
+  native path for other mailbox operations. Each mailbox grant allows up to
+  10 creation requests per elapsed minute across service restarts.
+  The server must report one personal namespace through `NAMESPACE`. A
+  nonempty prefix uses printable ASCII without `&`, ends in exactly one
+  hierarchy delimiter, and begins with a different character. The delimiter
+  must be one character. If an exact create cannot be confirmed and LIST
+  shows different casing, use the listed path for subsequent mailbox operations.
 - `messages`: search, read, move, and recoverably trash.
 - `send`: draft, send, and reply with idempotency and volume controls.
 - `attachments`: quarantine, scan, and inspect eligible text in a sandbox.
