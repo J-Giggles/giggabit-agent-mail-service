@@ -4,11 +4,16 @@ import { expect, it } from "vitest";
 
 import { ImapSmtpProvider } from "./imap-smtp-provider.js";
 
-it("sends a quoted reference and exact quoted mailbox name on the IMAP wire", async () => {
+async function withImapFixture(
+  namespace: string,
+  mailbox: string,
+  verify: (provider: ImapSmtpProvider, listCommands: Buffer[], mutations: string[]) => Promise<void>,
+) {
   const sockets = new Set<Socket>();
   const listCommands: Buffer[] = [];
-  const expected = Buffer.from('LIST "" "My Archive"\r\n');
-  let createAttempts = 0;
+  const mutations: string[] = [];
+  const quotedMailbox = JSON.stringify(mailbox);
+  const exactList = Buffer.from(`LIST "" ${quotedMailbox}\r\n`);
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.once("close", () => { sockets.delete(socket); });
@@ -33,16 +38,22 @@ it("sends a quoted reference and exact quoted mailbox name on the IMAP wire", as
             socket.write(`${tag} OK LOGIN\r\n`);
             break;
           case "NAMESPACE":
-            socket.write(`* NAMESPACE (("" "/")) NIL NIL\r\n${tag} OK NAMESPACE\r\n`);
+            socket.write(`* NAMESPACE ${namespace}\r\n${tag} OK NAMESPACE\r\n`);
             break;
           case "LIST":
             listCommands.push(command);
-            if (createAttempts && command.equals(expected)) socket.write('* LIST () "/" "My Archive"\r\n');
+            if (mutations.includes("CREATE") && command.equals(exactList)) {
+              socket.write(`* LIST () "/" ${quotedMailbox}\r\n`);
+            }
             socket.write(`${tag} OK LIST\r\n`);
             break;
           case "CREATE":
-            createAttempts += 1;
+            mutations.push(verb);
             socket.write(`${tag} NO [ALREADYEXISTS] Mailbox already exists\r\n`);
+            break;
+          case "SUBSCRIBE":
+            mutations.push(verb);
+            socket.write(`${tag} OK SUBSCRIBE\r\n`);
             break;
           case "LOGOUT":
             socket.end(`* BYE Synthetic IMAP closed\r\n${tag} OK LOGOUT\r\n`);
@@ -69,12 +80,27 @@ it("sends a quoted reference and exact quoted mailbox name on the IMAP wire", as
       }) },
     });
 
-    await expect(provider.ensureFolder("My Archive")).resolves.toBe("My Archive");
-    await expect(provider.ensureFolder("My Archive")).resolves.toBe("My Archive");
-    expect(createAttempts).toBe(1);
-    expect(listCommands).toEqual([expected, expected, expected]);
+    await verify(provider, listCommands, mutations);
   } finally {
     for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
+}
+
+it("sends a quoted reference and exact quoted mailbox name on the IMAP wire", async () => {
+  await withImapFixture('(("" "/")) NIL NIL', "My Archive", async (provider, listCommands, mutations) => {
+    const expected = Buffer.from('LIST "" "My Archive"\r\n');
+    await expect(provider.ensureFolder("My Archive")).resolves.toBe("My Archive");
+    await expect(provider.ensureFolder("My Archive")).resolves.toBe("My Archive");
+    expect(mutations).toEqual(["CREATE"]);
+    expect(listCommands).toEqual([expected, expected, expected]);
+  });
+});
+
+it("refuses a namespace extension without a value list before issuing IMAP mutations", async () => {
+  await withImapFixture('(("" "/" "X-TEST")) NIL NIL', "Archive/My Folder", async (provider, listCommands, mutations) => {
+    await expect(provider.ensureFolder("Archive/My Folder")).rejects.toThrow("Unsupported IMAP personal namespace");
+    expect(listCommands).toEqual([]);
+    expect(mutations).toEqual([]);
+  });
 });

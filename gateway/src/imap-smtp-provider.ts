@@ -222,7 +222,7 @@ const namespacePrefix = z.object({
   value: z.union([z.string(), z.instanceof(Buffer)]),
 }).transform((token) => token.value);
 const namespaceDelimiter = z.object({ type: z.literal("STRING"), value: z.string() }).transform((token) => token.value);
-const namespaceEntry = z.tuple([namespacePrefix, namespaceDelimiter.nullable()]).rest(z.unknown());
+const namespaceEntry = z.tuple([namespacePrefix, namespaceDelimiter.nullable()]);
 const nonPersonalNamespaces = z.array(namespaceEntry).min(1).nullable();
 const namespaceReply = z.object({
   attributes: z.tuple([z.tuple([namespaceEntry]), nonPersonalNamespaces, nonPersonalNamespaces]),
