@@ -15,10 +15,13 @@ function mailbox(path: string, ...flags: string[]): ListResponse {
 type Namespace = { prefix: string; delimiter: string | null };
 type WireNamespace = { prefix: string | Buffer; delimiter: string | null };
 const supported = { prefix: "", delimiter: "/" };
+const tokenValue = (token: unknown) =>
+  token && typeof token === "object" && "value" in token ? token.value : token;
 
-function wireNamespace(entries: WireNamespace[]) {
+function wireNamespace(entries: WireNamespace[], delimiterType: "STRING" | "ATOM" = "STRING") {
   return entries.map(({ prefix, delimiter }) => [
-    { value: prefix }, delimiter === null ? null : { value: delimiter },
+    { type: Buffer.isBuffer(prefix) ? "LITERAL" : "STRING", value: prefix },
+    delimiter === null ? null : { type: delimiterType, value: delimiter },
   ]);
 }
 
@@ -30,6 +33,8 @@ function imapProvider(
     other?: WireNamespace[];
     shared?: WireNamespace[];
     listReference?: string;
+    listPattern?: string;
+    delimiterType?: "STRING" | "ATOM";
     provider?: string;
   } = {},
 ) {
@@ -47,8 +52,9 @@ function imapProvider(
         untagged: Record<string, (reply: unknown) => Promise<void>>;
       }) {
         if (command === "LIST") {
-          if (extensions.listReference !== undefined &&
-            (!Array.isArray(attributes) || attributes[0] !== extensions.listReference || attributes[1] !== "*")) {
+          const [reference, pattern] = Array.isArray(attributes) ? attributes.map(tokenValue) : [];
+          if ((extensions.listReference !== undefined && reference !== extensions.listReference) ||
+            (extensions.listPattern !== undefined && pattern !== extensions.listPattern)) {
             return { next: () => undefined };
           }
           for (const item of await list()) {
@@ -61,7 +67,7 @@ function imapProvider(
           expect(command).toBe("NAMESPACE");
           await options.untagged.NAMESPACE?.({
             attributes: [
-              wireNamespace(personal),
+              wireNamespace(personal, extensions.delimiterType),
               extensions.other ? wireNamespace(extensions.other) : null,
               extensions.shared ? wireNamespace(extensions.shared) : null,
             ],
@@ -266,9 +272,9 @@ describe("IMAP folder creation", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("uses the pinned LIST reference when confirming a failed CREATE and when retrying", async () => {
-    const { provider, list, create } = imapProvider(supported, [supported], { listReference: "" });
+  it("confirms and retries a mailbox hidden from wildcard LIST", async () => {
     const path = "Archive";
+    const { provider, list, create } = imapProvider(supported, [supported], { listReference: "", listPattern: path });
     list.mockResolvedValueOnce([]).mockResolvedValue([mailbox(path)]);
     create.mockRejectedValue(new Error("uncoded CREATE failure"));
 
@@ -277,6 +283,24 @@ describe("IMAP folder creation", () => {
     expect(list).toHaveBeenCalledTimes(3);
     expect(create).toHaveBeenCalledExactlyOnceWith(path);
   });
+
+  it.each([
+    { label: "absent group expressed as an empty list", shared: [] },
+    { label: "an unquoted delimiter", delimiterType: "ATOM" },
+  ] satisfies { label: string; shared?: WireNamespace[]; delimiterType?: "ATOM" }[])(
+    "refuses $label before LIST or CREATE", async ({ shared, delimiterType }) => {
+      const { provider, list, create } = imapProvider(supported, [supported], {
+        ...(shared ? { shared } : {}),
+        ...(delimiterType ? { delimiterType } : {}),
+      });
+      list.mockResolvedValue([]);
+      create.mockResolvedValue({ path: "Archive", created: true });
+
+      await expect(provider.ensureFolder("Archive")).rejects.toThrow("Unsupported IMAP personal namespace");
+      expect(list).not.toHaveBeenCalled();
+      expect(create).not.toHaveBeenCalled();
+    },
+  );
 
   it("refuses an unpinned personal prefix even when only scoped LIST would show it", async () => {
     const personal = { prefix: "#personal/", delimiter: "/" };

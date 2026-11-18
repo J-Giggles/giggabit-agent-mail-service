@@ -27,7 +27,10 @@ function supplyGreenMailNamespace() {
       }) => {
         if (command !== "NAMESPACE") return exec.call(this, command, attributes, options);
         await options?.untagged?.NAMESPACE?.({
-          attributes: [[[{ value: namespace.prefix }, { value: namespace.delimiter }]], null, null],
+          attributes: [[[
+            { type: "STRING", value: namespace.prefix },
+            { type: "STRING", value: namespace.delimiter },
+          ]], null, null],
         });
         return { next: () => undefined };
       },

@@ -217,8 +217,13 @@ async function listMailboxes(client: ImapFlow): Promise<ListResponse[]> {
 }
 
 const nameToken = z.object({ value: z.union([z.string(), z.instanceof(Buffer)]) }).transform((token) => token.value);
-const namespaceEntry = z.tuple([nameToken, nameToken.nullable()]).rest(z.unknown());
-const nonPersonalNamespaces = z.array(namespaceEntry).nullable();
+const namespacePrefix = z.object({
+  type: z.enum(["STRING", "LITERAL"]),
+  value: z.union([z.string(), z.instanceof(Buffer)]),
+}).transform((token) => token.value);
+const namespaceDelimiter = z.object({ type: z.literal("STRING"), value: z.string() }).transform((token) => token.value);
+const namespaceEntry = z.tuple([namespacePrefix, namespaceDelimiter.nullable()]).rest(z.unknown());
+const nonPersonalNamespaces = z.array(namespaceEntry).min(1).nullable();
 const namespaceReply = z.object({
   attributes: z.tuple([z.tuple([namespaceEntry]), nonPersonalNamespaces, nonPersonalNamespaces]),
 });
@@ -246,7 +251,9 @@ function usesImap4Rev2(client: ImapFlow): boolean {
       !client.capabilities.has("IMAP4rev1") && !client.capabilities.has("IMAP4REV1"));
 }
 
-async function rawImapReplies(client: ImapFlow, command: "NAMESPACE" | "LIST", attributes: string[] | false) {
+type ImapStringToken = { type: "STRING"; value: string };
+
+async function rawImapReplies(client: ImapFlow, command: "NAMESPACE" | "LIST", attributes: ImapStringToken[] | false) {
   const exec = "exec" in client ? client.exec : undefined;
   if (typeof exec !== "function") throw new Error("raw IMAP command unavailable");
   const replies: unknown[] = [];
@@ -282,9 +289,9 @@ async function folderCreateNamespace(client: ImapFlow) {
   const [[personal], otherUsers, shared] = parsed.data.attributes;
   const [wirePrefix, wireDelimiter] = personal;
   const prefix = wireText(wirePrefix);
-  const delimiter = wireDelimiter === null ? "" : wireText(wireDelimiter);
+  const delimiter = wireDelimiter ?? "";
   if (prefix !== expected.prefix || delimiter !== expected.delimiter ||
-    Boolean(otherUsers?.length) !== expected.otherUsers || Boolean(shared?.length) !== expected.shared) {
+    (otherUsers !== null) !== expected.otherUsers || (shared !== null) !== expected.shared) {
     throw new FolderCreateRefusal("unsupportedNamespace");
   }
   const activeNamespace = "namespace" in client ? client.namespace : undefined;
@@ -324,9 +331,12 @@ function decodeListedName(name: string, utf8: boolean): string | undefined {
   }
 }
 
-async function selectableMailboxNames(client: ImapFlow, prefix: string, utf8: boolean): Promise<string[]> {
+async function selectableMailboxNames(client: ImapFlow, path: string, utf8: boolean): Promise<string[]> {
   // ImapFlow's convenience list merges LSUB flags by normalized path. Use only raw LIST rows here.
-  return (await rawImapReplies(client, "LIST", [prefix, "*"])).flatMap((reply) => {
+  return (await rawImapReplies(client, "LIST", [
+    { type: "STRING", value: "" },
+    { type: "STRING", value: path },
+  ])).flatMap((reply) => {
     const parsed = listReply.safeParse(reply);
     if (!parsed.success) return [];
     const [flags, , wireName] = parsed.data.attributes;
@@ -415,7 +425,7 @@ export class ImapSmtpProvider implements MailboxProvider {
         throw new FolderCreateRefusal("outsidePersonalNamespace");
       }
 
-      const listed = await selectableMailboxNames(client, prefix, utf8);
+      const listed = await selectableMailboxNames(client, path, utf8);
       if (listed.includes(path)) return path;
       if (folder !== path && delimiter !== "/" && folder.includes("/") && listed.includes(folder)) {
         throw new FolderCreateRefusal("invalidPath");
@@ -427,7 +437,7 @@ export class ImapSmtpProvider implements MailboxProvider {
       }
       let afterCreate: string[];
       try {
-        afterCreate = await selectableMailboxNames(client, prefix, utf8);
+        afterCreate = await selectableMailboxNames(client, path, utf8);
       } catch {
         throw new FolderCreateRefusal("creationUnconfirmed");
       }
