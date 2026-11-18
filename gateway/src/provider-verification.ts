@@ -18,6 +18,7 @@ export interface ProviderVerificationOptions {
 
 export interface ProviderVerificationResult {
   tag: string;
+  folderCreation: "verified" | "unsupported (unpinned namespace)";
   searched: number;
   read: number;
   drafted: number;
@@ -56,7 +57,7 @@ export class ProviderVerificationHarness {
   }
 
   async run(): Promise<ProviderVerificationResult> {
-    const ensureFolder = requireCapability(this.#provider.ensureFolder?.bind(this.#provider), "folder creation");
+    const { testFolder, folderCreation } = await this.#prepareFolders();
     const gateway = new HostMailGateway({
       providers: [this.#provider],
       audit: this.#audit,
@@ -69,10 +70,6 @@ export class ProviderVerificationHarness {
       expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
     };
     const grantId = this.#provider.grant.grantId;
-    const testFolder = await ensureFolder(TEST_FOLDER);
-    await ensureFolder("Drafts");
-    await ensureFolder("Trash");
-
     const tag = `agent-gateway-test-${randomUUID()}`;
     const subject = `Synthetic provider verification ${tag}`;
     const sent = await gateway.callTool(principal, "send", {
@@ -151,6 +148,7 @@ export class ProviderVerificationHarness {
     }
     return {
       tag,
+      folderCreation,
       searched: inboxMessages.length + movedMessages.length,
       read,
       drafted: 1,
@@ -159,6 +157,26 @@ export class ProviderVerificationHarness {
       trashed,
       providerIdentifiers,
     };
+  }
+
+  async #prepareFolders(): Promise<{
+    testFolder: string;
+    folderCreation: ProviderVerificationResult["folderCreation"];
+  }> {
+    if (this.#provider.grant.provider === "imap-smtp") {
+      const folders = await this.#provider.listFolders();
+      const [folder, duplicate] = folders.filter(({ name }) => name === TEST_FOLDER);
+      if (!folder || duplicate) {
+        throw new Error(`Provision one selectable folder named "${TEST_FOLDER}" before verifying a password grant.`);
+      }
+      return { testFolder: folder.path, folderCreation: "unsupported (unpinned namespace)" };
+    }
+
+    const ensureFolder = requireCapability(this.#provider.ensureFolder?.bind(this.#provider), "folder creation");
+    const testFolder = await ensureFolder(TEST_FOLDER);
+    await ensureFolder("Drafts");
+    await ensureFolder("Trash");
+    return { testFolder, folderCreation: "verified" };
   }
 
   async #waitFor(folder: string, tag: string, minimum: number) {
