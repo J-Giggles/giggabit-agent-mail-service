@@ -37,17 +37,36 @@ provider credentials, the vault key, host paths, or plaintext magic links.
   delimiter. Repeating an exact create succeeds and returns the
   native path for other mailbox operations. Each mailbox grant allows up to
   10 creation requests per elapsed minute across service restarts.
-  The server must report one personal namespace through `NAMESPACE`. A
-  nonempty prefix uses printable ASCII without `&`, ends in exactly one
-  hierarchy delimiter, and begins with a different character. The delimiter
-  must be one character. Paths in reported shared or other-user namespaces
-  are refused. If an exact create cannot be confirmed and LIST
-  shows different casing, use the listed path for subsequent mailbox operations.
+  The server must match the namespace pin below. If an exact create cannot be
+  confirmed and LIST shows different casing, use the listed path for subsequent
+  mailbox operations.
 - `messages`: search, read, move, and recoverably trash.
 - `send`: draft, send, and reply with idempotency and volume controls.
 - `attachments`: quarantine, scan, and inspect eligible text in a sandbox.
 - `magic_link`: optional claim, release, and consume operations; absent unless
   operator policy enables it.
+
+## Folder creation namespace pins
+
+| Provider | Personal prefix | Hierarchy delimiter | Revision | Other-user and shared namespaces |
+| --- | --- | --- | --- | --- |
+| Google OAuth | Empty | `/` | IMAP4rev1 | Absent |
+| Microsoft OAuth | Empty | `/` | IMAP4rev1 | Absent |
+
+On 2026-11-18, signed folder LIST succeeded on two Google and three Microsoft
+grants. Both Google results and two Microsoft results showed slash hierarchy.
+The third Microsoft result showed root paths only. The public endpoints advertised
+`IMAP4rev1` and `NAMESPACE` before authentication. Google's IMAP examples
+show root-relative LIST names with a slash delimiter. Microsoft documents
+IMAP OAuth access, and the live LIST results supply the delimiter evidence.
+[Google IMAP extensions](https://developers.google.com/workspace/gmail/imap/imap-extensions) ·
+[Microsoft IMAP authentication](https://learn.microsoft.com/en-us/exchange/client-developer/legacy-protocols/how-to-authenticate-an-imap-pop-smtp-application-by-using-oauth)
+
+LIST cannot confirm the absence of other-user or shared namespaces. The first
+live create checks the authenticated `NAMESPACE` reply before its folder LIST
+or CREATE. An unsupported-namespace response calls for reviewing the pin.
+The three hosted IMAP grants refused the read-only probe, so folder creation
+has no hosted IMAP pin.
 
 ## Extension seams
 
