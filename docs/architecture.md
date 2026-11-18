@@ -28,7 +28,10 @@ provider credentials, the vault key, host paths, or plaintext magic links.
 
 ## MCP tools
 
-- `folders`: list folders.
+- `folders`: list folders or create a folder for a connected mailbox grant.
+  Pass the path in `folder` and separate nested levels with `/`, as in
+  `Finance/Receipts`. Creating an existing folder succeeds. Each mailbox grant
+  allows up to 10 folder creation requests per minute.
 - `messages`: search, read, move, and recoverably trash.
 - `send`: draft, send, and reply with idempotency and volume controls.
 - `attachments`: quarantine, scan, and inspect eligible text in a sandbox.

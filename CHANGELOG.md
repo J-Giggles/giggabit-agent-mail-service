@@ -6,6 +6,7 @@ notes.
 
 ## Unreleased
 
+- add idempotent creation of nested mailbox folders;
 - harden HTML entity decoding for the disabled-by-default Magic-Link
   Capability;
 - make verification fail closed when required tools are missing;
