@@ -30,8 +30,9 @@ provider credentials, the vault key, host paths, or plaintext magic links.
 
 - `folders`: list folders or create a folder for a connected mailbox grant.
   Pass the path in `folder` and separate nested levels with `/`, as in
-  `Finance/Receipts`. Creating an existing folder succeeds. Each mailbox grant
-  allows up to 10 folder creation requests per minute.
+  `Finance/Receipts`. Creating an existing folder succeeds and returns its
+  provider path for use in later mailbox operations. Each mailbox grant allows
+  up to 10 folder creation requests per elapsed minute across service restarts.
 - `messages`: search, read, move, and recoverably trash.
 - `send`: draft, send, and reply with idempotency and volume controls.
 - `attachments`: quarantine, scan, and inspect eligible text in a sandbox.
