@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { HostMailGateway } from "./gateway.js";
 import type { AgentIdentityAuthority, AgentPrincipal } from "./identity.js";
+import { FolderCreateRefusal } from "./provider.js";
 import { packageVersion } from "./package-version.js";
 
 export interface TailnetIdentityVerifier {
@@ -74,9 +75,12 @@ function registerGatewayTools(server: McpServer, gateway: HostMailGateway, princ
             content: [{ type: "text" as const, text: JSON.stringify(result) }],
             structuredContent: result,
           };
-        } catch {
+        } catch (error) {
           return {
-            content: [{ type: "text" as const, text: "Mail gateway operation failed." }],
+            content: [{
+              type: "text" as const,
+              text: error instanceof FolderCreateRefusal ? error.message : "Mail gateway operation failed.",
+            }],
             isError: true,
           };
         }

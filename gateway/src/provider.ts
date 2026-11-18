@@ -1,3 +1,14 @@
+const folderCreateRefusals = {
+  unsupportedNamespace: "Unsupported IMAP personal namespace.",
+  unconfirmedPath: "The server reported an existing mailbox without an exact selectable folder match. Use the exact path from folders.list.",
+};
+
+export class FolderCreateRefusal extends Error {
+  constructor(reason: keyof typeof folderCreateRefusals) {
+    super(folderCreateRefusals[reason]);
+  }
+}
+
 export interface MailboxGrantDescriptor {
   grantId: string;
   label: string;
