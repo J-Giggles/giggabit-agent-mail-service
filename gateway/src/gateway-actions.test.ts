@@ -29,9 +29,12 @@ describe("Gateway mailbox write seam", () => {
       "unsupported folders action",
     );
     expect(audit).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      grantId: "mailbox-1", action: "folders.create", targetRef: folder,
+      grantId: "mailbox-1", action: "folders.create.requested", targetRef: folder,
     }));
     expect(audit).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      grantId: "mailbox-1", action: "folders.create", targetRef: folder,
+    }));
+    expect(audit).toHaveBeenNthCalledWith(4, expect.objectContaining({
       grantId: "mailbox-1", action: "folders.create", targetRef: folder,
     }));
     expect(ensureFolder).toHaveBeenCalledTimes(2);
@@ -43,6 +46,31 @@ describe("Gateway mailbox write seam", () => {
       "folder creation rate limit reached",
     );
     expect(ensureFolder).toHaveBeenCalledTimes(10);
+  });
+
+  it("requires an audit attempt before the provider can create a folder", async () => {
+    const ensureFolder = vi.fn(async () => undefined);
+    const provider: MailboxProvider = {
+      grant: { grantId: "mailbox-1", label: "Test mailbox", provider: "fake" },
+      ensureFolder,
+      listFolders: async () => [],
+      search: async () => [],
+      read: async () => { throw new Error("not used"); },
+    };
+    const audit = vi.fn()
+      .mockRejectedValueOnce(new Error("audit unavailable"))
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("audit unavailable"));
+    const gateway = new HostMailGateway({ providers: [provider], audit });
+    const principal = { tokenId: "token-1", runId: "run-1", nodeId: "node-1", expiresAt: "2026-07-11T18:00:00.000Z" };
+    const input = { action: "create", grant_id: "mailbox-1", folder: "Finance/Receipts" };
+
+    await expect(gateway.callTool(principal, "folders", input)).rejects.toThrow("audit unavailable");
+    expect(ensureFolder).not.toHaveBeenCalled();
+    await expect(gateway.callTool(principal, "folders", input)).rejects.toThrow("audit unavailable");
+    expect(ensureFolder).toHaveBeenCalledOnce();
+    expect(audit).toHaveBeenNthCalledWith(2, expect.objectContaining({ action: "folders.create.requested" }));
+    expect(audit).toHaveBeenNthCalledWith(3, expect.objectContaining({ action: "folders.create" }));
   });
 
   it("creates drafts, moves messages, and exposes recoverable trash without permanent deletion", async () => {

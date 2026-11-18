@@ -232,7 +232,13 @@ export class HostMailGateway {
         const recent = (this.#folderCreateTimes.get(grantId) ?? []).filter((time) => time > now - 60_000);
         if (recent.length >= FOLDER_CREATES_PER_MINUTE) throw new Error("folder creation rate limit reached");
         this.#folderCreateTimes.set(grantId, [...recent, now]);
-        await provider.ensureFolder(folder);
+        await this.#record(principal, grantId, "folders.create.requested", folder);
+        try {
+          await provider.ensureFolder(folder);
+        } catch (error) {
+          await this.#record(principal, grantId, "folders.create.failed", folder);
+          throw error;
+        }
         await this.#record(principal, grantId, "folders.create", folder);
         return { action: "create", grant_id: grantId, folder };
       }

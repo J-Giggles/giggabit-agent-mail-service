@@ -274,19 +274,33 @@ export class ImapSmtpProvider implements MailboxProvider {
     const segments = folder.split("/");
     if (segments.some((segment) => !segment.trim())) throw new Error("invalid mail folder path");
     await this.#withImap(async (client) => {
-      const folders = await client.list();
-      const inbox = folders.find((item) => item.path === "INBOX");
-      const path = segments.join(inbox?.delimiter || "/");
-      const exists = (items: ListResponse[]) => items.some((item) =>
-        item.path === path || (item.path === "INBOX" && path.toUpperCase() === "INBOX"),
-      );
-      if (exists(folders)) return;
-      try {
-        await client.mailboxCreate(segments);
-      } catch (error) {
-        // Some servers return a generic failure if another request created the folder first.
-        if (!exists(await client.list())) throw error;
+      // ImapFlow sets the personal namespace during connect, including its LIST fallback.
+      const namespace = "namespace" in client ? client.namespace : undefined;
+      if (!namespace || typeof namespace !== "object" || !("prefix" in namespace) ||
+        typeof namespace.prefix !== "string" || !("delimiter" in namespace)) {
+        throw new Error("mailbox namespace is unavailable");
       }
+      const delimiter = typeof namespace.delimiter === "string" ? namespace.delimiter : "";
+      if (!delimiter && segments.length > 1) throw new Error("server does not support nested folders");
+      const name = segments.join(delimiter);
+      let path = name.startsWith(namespace.prefix) ? name : namespace.prefix + name;
+      if (name.toUpperCase() === "INBOX") path = "INBOX";
+
+      const exists = async () => (await client.list()).some((item) =>
+        item.path === path && item.listed && ![...item.flags].some((flag) =>
+          ["\\nonexistent", "\\noselect"].includes(flag.toLowerCase()),
+        ),
+      );
+      if (await exists()) return;
+      try {
+        const result = await client.mailboxCreate(path);
+        if (result?.created) return;
+      } catch (error) {
+        // Some servers report only a generic error when another request wins CREATE.
+        if (await exists()) return;
+        throw error;
+      }
+      if (!(await exists())) throw new Error("mailbox creation did not produce a selectable folder");
     });
   }
 
