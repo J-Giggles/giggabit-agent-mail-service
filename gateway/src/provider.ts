@@ -31,6 +31,10 @@ export interface MailFolder {
   role?: "archive" | "drafts" | "inbox" | "sent" | "spam" | "trash";
 }
 
+export function findFolder(folders: readonly MailFolder[], role: NonNullable<MailFolder["role"]>): string | undefined {
+  return folders.find((folder) => folder.role === role)?.path;
+}
+
 export interface MailMessageSummary {
   messageRef: string;
   folder: string;

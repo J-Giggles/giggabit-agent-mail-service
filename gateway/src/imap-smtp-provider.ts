@@ -3,7 +3,7 @@ import { simpleParser, type AddressObject } from "mailparser";
 import { createTransport } from "nodemailer";
 import { z } from "zod";
 
-import { FolderCreateRefusal } from "./provider.js";
+import { findFolder, FolderCreateRefusal } from "./provider.js";
 import type {
   DownloadAttachmentInput,
   DownloadAttachmentResult,
@@ -119,24 +119,24 @@ function formatAddress(value: AddressObject | AddressObject[] | undefined): stri
   return value?.text ?? "";
 }
 
-function folderRole(folder: ListResponse): MailFolder["role"] {
-  switch (folder.specialUse) {
-    case "\\Archive":
-    case "\\All":
-      return "archive";
-    case "\\Drafts":
-      return "drafts";
-    case "\\Inbox":
-      return "inbox";
-    case "\\Junk":
-      return "spam";
-    case "\\Sent":
-      return "sent";
-    case "\\Trash":
-      return "trash";
-    default:
-      return folder.path.toUpperCase() === "INBOX" ? "inbox" : undefined;
+const specialUseRoles = new Map<string, NonNullable<MailFolder["role"]>>([
+  ["\\archive", "archive"],
+  ["\\all", "archive"],
+  ["\\drafts", "drafts"],
+  ["\\inbox", "inbox"],
+  ["\\junk", "spam"],
+  ["\\sent", "sent"],
+  ["\\trash", "trash"],
+]);
+
+function folderRole(folder: ListResponse, listOnly: boolean): MailFolder["role"] {
+  // ImapFlow fills specialUse after the LIST-only return.
+  const flags = listOnly ? folder.flags : [folder.specialUse];
+  for (const flag of flags) {
+    const role = flag && specialUseRoles.get(asciiFold(flag));
+    if (role) return role;
   }
+  return folder.path.toUpperCase() === "INBOX" ? "inbox" : undefined;
 }
 
 function searchCriteria(query: string): SearchObject {
@@ -350,9 +350,14 @@ async function selectableMailboxNames(client: ImapFlow, path: string, utf8: bool
   });
 }
 
-async function findFolder(client: ImapFlow, role: MailFolder["role"], fallback: string): Promise<string> {
-  const folders = await listMailboxes(client);
-  return folders.find((folder) => folderRole(folder) === role)?.path ?? fallback;
+async function listMailFolders(client: ImapFlow, selectableOnly: boolean): Promise<MailFolder[]> {
+  // ImapFlow 1.4.7 supports listOnly but omits it from ListOptions.
+  const listOnly: ListOptions & { listOnly: true } = { listOnly: true };
+  const folders = await listMailboxes(client, selectableOnly ? listOnly : undefined);
+  return folders.filter((folder) => !selectableOnly || isSelectableMailbox(folder.flags)).map((folder) => {
+    const role = folderRole(folder, selectableOnly);
+    return { path: folder.path, name: folder.name, ...(role ? { role } : {}) };
+  });
 }
 
 function currentUidValidity(client: ImapFlow): bigint {
@@ -404,16 +409,7 @@ export class ImapSmtpProvider implements MailboxProvider {
   }
 
   async listFolders({ selectableOnly = false } = {}): Promise<MailFolder[]> {
-    // ImapFlow 1.4.7 supports listOnly but omits it from ListOptions.
-    const listOnly: ListOptions & { listOnly: true } = { listOnly: true };
-    return this.#withImap(async (client) =>
-      (await listMailboxes(client, selectableOnly ? listOnly : undefined))
-        .filter((folder) => !selectableOnly || isSelectableMailbox(folder.flags))
-        .map((folder) => {
-          const role = folderRole(folder);
-          return { path: folder.path, name: folder.name, ...(role ? { role } : {}) };
-        }),
-    );
+    return this.#withImap((client) => listMailFolders(client, selectableOnly));
   }
 
   async ensureFolder(folder: string): Promise<string> {
@@ -577,7 +573,8 @@ export class ImapSmtpProvider implements MailboxProvider {
     const connection = await this.#connections.getConnection(this.grant.grantId);
     const raw = await composeRaw(connection, input);
     return this.#withImap(async (client) => {
-      const folder = await findFolder(client, "drafts", "Drafts");
+      const folders = await listMailFolders(client, this.grant.provider !== "imap-smtp");
+      const folder = findFolder(folders, "drafts") ?? "Drafts";
       const result = await client.append(folder, raw, ["\\Draft", "\\Seen"], new Date());
       if (!result) throw new Error("draft could not be stored");
       return {
@@ -619,7 +616,8 @@ export class ImapSmtpProvider implements MailboxProvider {
     const client = createImapClient(connection);
     await client.connect();
     try {
-      const trashFolder = await findFolder(client, "trash", "Trash");
+      const folders = await listMailFolders(client, this.grant.provider !== "imap-smtp");
+      const trashFolder = findFolder(folders, "trash") ?? "Trash";
       const reference = parseMessageReference(input.messageRef, input.folder);
       const lock = await client.getMailboxLock(input.folder);
       try {

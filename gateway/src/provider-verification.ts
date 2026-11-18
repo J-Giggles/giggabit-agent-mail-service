@@ -4,13 +4,15 @@ import { HostMailGateway } from "./gateway.js";
 import type { GatewayAuditEvent } from "./gateway.js";
 import type { MailCircuitBreaker } from "./circuit-breaker.js";
 import type { AgentPrincipal } from "./identity.js";
-import type { MailMessageDetail, MailboxProvider } from "./provider.js";
+import { findFolder, type MailMessageDetail, type MailboxProvider } from "./provider.js";
 
 const TEST_FOLDER = "Agent Gateway Test";
 
 export class VerificationTestFolderError extends Error {
-  constructor() {
-    super(`Create or fix the folder "${TEST_FOLDER}" in this mailbox, then rerun admin verify. It must be selectable.`);
+  constructor(specialUse?: "Drafts" | "Trash") {
+    super(specialUse
+      ? `Set up a selectable ${specialUse} folder with its IMAP special-use role, then rerun admin verify.`
+      : `Create or fix the folder "${TEST_FOLDER}" in this mailbox, then rerun admin verify. It must be selectable.`);
   }
 }
 
@@ -165,8 +167,8 @@ export class ProviderVerificationHarness {
     testFolder: string;
     folderCreation: ProviderVerificationResult["folderCreation"];
   }> {
+    const folders = await this.#provider.listFolders({ selectableOnly: true });
     if (this.#provider.grant.provider === "imap-smtp") {
-      const folders = await this.#provider.listFolders({ selectableOnly: true });
       const [folder, duplicate] = folders.filter(({ name }) => name === TEST_FOLDER);
       if (!folder || duplicate) {
         throw new VerificationTestFolderError();
@@ -174,12 +176,11 @@ export class ProviderVerificationHarness {
       return { testFolder: folder.path, folderCreation: "unsupported (unpinned namespace)" };
     }
 
-    const create = (folder: string) => gateway.callTool(principal, "folders", {
-      action: "create", grant_id: this.#provider.grant.grantId, folder,
+    if (!findFolder(folders, "drafts")) throw new VerificationTestFolderError("Drafts");
+    if (!findFolder(folders, "trash")) throw new VerificationTestFolderError("Trash");
+    const testFolder = await gateway.callTool(principal, "folders", {
+      action: "create", grant_id: this.#provider.grant.grantId, folder: TEST_FOLDER,
     });
-    const testFolder = await create(TEST_FOLDER);
-    await create("Drafts");
-    await create("Trash");
     return { testFolder: String(testFolder.folder), folderCreation: "verified" };
   }
 
