@@ -15,7 +15,6 @@ import type { AttachmentQuarantine } from "./quarantine.js";
 
 const DEFAULT_SEARCH_LIMIT = 20;
 const MAX_SEARCH_LIMIT = 100;
-const FOLDER_CREATES_PER_MINUTE = 10;
 
 type ToolArguments = Record<string, unknown>;
 
@@ -177,7 +176,6 @@ export class HostMailGateway {
   readonly #magicLinkClaims = new Map<string, MagicLinkClaim>();
   readonly #magicLinkPolicy = new Map<string, { expectedSenders: Set<string>; expectedHostnames: Set<string> }>();
   readonly #now: () => Date;
-  readonly #folderCreateTimes = new Map<string, number[]>();
   readonly #providers: Map<string, MailboxProvider>;
   readonly #quarantine: AttachmentQuarantine | undefined;
 
@@ -228,10 +226,7 @@ export class HostMailGateway {
       if (input.action === "create") {
         if (!provider.ensureFolder) throw new Error("mailbox provider does not support creating folders");
         const folder = requiredString(input, "folder");
-        const now = this.#now().getTime();
-        const recent = (this.#folderCreateTimes.get(grantId) ?? []).filter((time) => time > now - 60_000);
-        if (recent.length >= FOLDER_CREATES_PER_MINUTE) throw new Error("folder creation rate limit reached");
-        this.#folderCreateTimes.set(grantId, [...recent, now]);
+        this.#circuitBreaker.reserveFolderCreation(grantId);
         await this.#record(principal, grantId, "folders.create.requested", folder);
         try {
           await provider.ensureFolder(folder);

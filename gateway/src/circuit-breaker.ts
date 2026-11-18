@@ -3,6 +3,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const IDEMPOTENCY_KEY_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/;
+const FOLDER_CREATES_PER_MINUTE = 10;
+const MINUTE_MS = 60_000;
 
 export interface MailCircuitLimits {
   perMinute: number;
@@ -38,6 +40,7 @@ export interface MailCircuitState {
 export interface MailCircuitStateStore {
   load(): MailCircuitState | undefined;
   save(state: MailCircuitState): void;
+  reserveFolderCreation(grantId: string, occurredAt: number): boolean;
 }
 
 function emptyState(): MailCircuitState {
@@ -77,6 +80,9 @@ export class SqliteMailCircuitStateStore implements MailCircuitStateStore {
     this.#database.exec(
       "CREATE TABLE IF NOT EXISTS circuit_state (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), state_json TEXT NOT NULL)",
     );
+    this.#database.exec(
+      "CREATE TABLE IF NOT EXISTS folder_create_attempts (grant_id TEXT NOT NULL, occurred_at INTEGER NOT NULL)",
+    );
   }
 
   load(): MailCircuitState | undefined {
@@ -92,6 +98,24 @@ export class SqliteMailCircuitStateStore implements MailCircuitStateStore {
         "INSERT INTO circuit_state(singleton, state_json) VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET state_json = excluded.state_json",
       )
       .run(JSON.stringify(state));
+  }
+
+  // Reserve a slot in a short transaction independent of outbound state updates.
+  reserveFolderCreation(grantId: string, occurredAt: number): boolean {
+    this.#database.exec("BEGIN IMMEDIATE");
+    try {
+      this.#database.prepare("DELETE FROM folder_create_attempts WHERE occurred_at <= ?")
+        .run(occurredAt - MINUTE_MS);
+      const result = this.#database.prepare(`
+        INSERT INTO folder_create_attempts (grant_id, occurred_at)
+        SELECT ?, ? WHERE (SELECT COUNT(*) FROM folder_create_attempts WHERE grant_id = ?) < ?
+      `).run(grantId, occurredAt, grantId, FOLDER_CREATES_PER_MINUTE);
+      this.#database.exec("COMMIT");
+      return result.changes > 0;
+    } catch (error) {
+      this.#database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   close(): void {
@@ -125,6 +149,7 @@ function assertPositiveInteger(label: string, value: number): void {
 
 export class MailCircuitBreaker {
   readonly #events = new Map<string, SendEvent[]>();
+  readonly #folderCreateTimes = new Map<string, number[]>();
   readonly #frozenGrants = new Set<string>();
   readonly #idempotency = new Map<string, IdempotencyEntry>();
   readonly #limits: MailCircuitLimits;
@@ -141,6 +166,19 @@ export class MailCircuitBreaker {
     assertPositiveInteger("perDay", this.#limits.perDay);
     assertPositiveInteger("maxRecipients", this.#limits.maxRecipients);
     this.#restore(this.#stateStore?.load() ?? emptyState());
+  }
+
+  reserveFolderCreation(grantId: string): void {
+    const now = this.#now().getTime();
+    if (this.#stateStore) {
+      if (!this.#stateStore.reserveFolderCreation(grantId, now)) {
+        throw new Error("folder creation rate limit reached");
+      }
+      return;
+    }
+    const recent = (this.#folderCreateTimes.get(grantId) ?? []).filter((time) => time > now - MINUTE_MS);
+    if (recent.length >= FOLDER_CREATES_PER_MINUTE) throw new Error("folder creation rate limit reached");
+    this.#folderCreateTimes.set(grantId, [...recent, now]);
   }
 
   reserve(input: ReserveInput): Reservation {
