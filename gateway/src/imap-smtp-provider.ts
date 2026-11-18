@@ -231,6 +231,15 @@ const isFolderSegment = (segment: string) =>
   folderSegment.test(segment) && !segment.endsWith(" ") && asciiFold(segment) !== "nil";
 const wireText = (value: string | Buffer) => typeof value === "string" ? value : value.toString("utf8");
 
+const folderCreateProviders = new Set(["google-oauth", "microsoft-oauth"]);
+const supportedFolderNamespace = {
+  revision: "IMAP4rev1",
+  prefix: "",
+  delimiter: "/",
+  otherUsers: false,
+  shared: false,
+};
+
 function usesImap4Rev2(client: ImapFlow): boolean {
   return client.enabled.has("IMAP4REV2") ||
     ((client.capabilities.has("IMAP4rev2") || client.capabilities.has("IMAP4REV2")) &&
@@ -254,7 +263,12 @@ async function rawImapReplies(client: ImapFlow, command: "NAMESPACE" | "LIST", a
 // ImapFlow normalizes prefixes during connect. Check the unmodified server reply before CREATE.
 async function folderCreateNamespace(client: ImapFlow) {
   const rev2 = usesImap4Rev2(client);
-  if (!rev2 && !client.capabilities.has("NAMESPACE")) throw new FolderCreateRefusal("unsupportedNamespace");
+  const revision = rev2 ? "IMAP4rev2" :
+    client.capabilities.has("IMAP4rev1") || client.capabilities.has("IMAP4REV1") ? "IMAP4rev1" : undefined;
+  const expected = supportedFolderNamespace;
+  if (revision !== expected.revision || !client.capabilities.has("NAMESPACE")) {
+    throw new FolderCreateRefusal("unsupportedNamespace");
+  }
   let replies: unknown[];
   try {
     replies = await rawImapReplies(client, "NAMESPACE", false);
@@ -269,27 +283,22 @@ async function folderCreateNamespace(client: ImapFlow) {
   const [wirePrefix, wireDelimiter] = personal;
   const prefix = wireText(wirePrefix);
   const delimiter = wireDelimiter === null ? "" : wireText(wireDelimiter);
-
-  const validPrefix = !prefix ||
-    (/^[\x20-\x7e]+$/.test(prefix) && !prefix.includes("&") && !prefix.startsWith(delimiter) &&
-      prefix.endsWith(delimiter) && !prefix.endsWith(delimiter + delimiter));
+  if (prefix !== expected.prefix || delimiter !== expected.delimiter ||
+    Boolean(otherUsers?.length) !== expected.otherUsers || Boolean(shared?.length) !== expected.shared) {
+    throw new FolderCreateRefusal("unsupportedNamespace");
+  }
   const activeNamespace = "namespace" in client ? client.namespace : undefined;
-  if (Array.from(delimiter).length !== 1 || !validPrefix || !activeNamespace ||
+  if (!activeNamespace ||
     typeof activeNamespace !== "object" || !("prefix" in activeNamespace) || !("delimiter" in activeNamespace)) {
     throw new FolderCreateRefusal("unsupportedNamespace");
   }
-  if (activeNamespace.prefix !== prefix || activeNamespace.delimiter !== delimiter) {
-    // Both pinned ImapFlow versions can omit a valid literal from the active namespace.
-    if ((!Buffer.isBuffer(wirePrefix) && !Buffer.isBuffer(wireDelimiter)) || activeNamespace.prefix !== "") {
-      throw new FolderCreateRefusal("unsupportedNamespace");
-    }
-    Object.assign(activeNamespace, { prefix, delimiter });
-  }
-  const utf8 = rev2 || client.enabled.has("UTF8=ACCEPT");
+  // Both pinned ImapFlow versions can omit a literal during their initial NAMESPACE parse.
+  Object.assign(activeNamespace, { prefix, delimiter });
+  const utf8 = client.enabled.has("UTF8=ACCEPT");
   const nonPersonalPrefixes = [...(otherUsers ?? []), ...(shared ?? [])].map(([wireName]) => {
     const name = decodeListedName(wireText(wireName), utf8);
     if (name === undefined) throw new FolderCreateRefusal("unsupportedNamespace");
-    return asciiFold(name);
+    return name;
   });
   return { prefix, delimiter, nonPersonalPrefixes, utf8 };
 }
@@ -315,9 +324,9 @@ function decodeListedName(name: string, utf8: boolean): string | undefined {
   }
 }
 
-async function selectableMailboxNames(client: ImapFlow, utf8: boolean): Promise<string[]> {
+async function selectableMailboxNames(client: ImapFlow, prefix: string, utf8: boolean): Promise<string[]> {
   // ImapFlow's convenience list merges LSUB flags by normalized path. Use only raw LIST rows here.
-  return (await rawImapReplies(client, "LIST", ["", "*"])).flatMap((reply) => {
+  return (await rawImapReplies(client, "LIST", [prefix, "*"])).flatMap((reply) => {
     const parsed = listReply.safeParse(reply);
     if (!parsed.success) return [];
     const [flags, , wireName] = parsed.data.attributes;
@@ -392,6 +401,7 @@ export class ImapSmtpProvider implements MailboxProvider {
   async ensureFolder(folder: string): Promise<string> {
     const segments = folder.split("/");
     if (!segments.every(isFolderSegment)) throw new FolderCreateRefusal("invalidPath");
+    if (!folderCreateProviders.has(this.grant.provider)) throw new FolderCreateRefusal("unsupportedNamespace");
     return this.#withImap(async (client) => {
       const { prefix, delimiter, nonPersonalPrefixes, utf8 } = await folderCreateNamespace(client);
       if (segments.some((segment) => segment.includes(delimiter))) {
@@ -401,11 +411,11 @@ export class ImapSmtpProvider implements MailboxProvider {
       const path = inbox ? "INBOX" : prefix + segments.join(delimiter);
       if (!inbox && path.toUpperCase() === "INBOX") throw new FolderCreateRefusal("invalidPath");
       const foldedPath = asciiFold(path);
-      if (nonPersonalPrefixes.some((name) => foldedPath.startsWith(name))) {
+      if (nonPersonalPrefixes.some((name) => path.startsWith(name))) {
         throw new FolderCreateRefusal("outsidePersonalNamespace");
       }
 
-      const listed = await selectableMailboxNames(client, utf8);
+      const listed = await selectableMailboxNames(client, prefix, utf8);
       if (listed.includes(path)) return path;
       if (folder !== path && delimiter !== "/" && folder.includes("/") && listed.includes(folder)) {
         throw new FolderCreateRefusal("invalidPath");
@@ -417,7 +427,7 @@ export class ImapSmtpProvider implements MailboxProvider {
       }
       let afterCreate: string[];
       try {
-        afterCreate = await selectableMailboxNames(client, utf8);
+        afterCreate = await selectableMailboxNames(client, prefix, utf8);
       } catch {
         throw new FolderCreateRefusal("creationUnconfirmed");
       }

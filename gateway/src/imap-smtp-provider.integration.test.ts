@@ -41,7 +41,7 @@ afterEach(() => vi.restoreAllMocks());
 describe.skipIf(!enabled)("IMAP/SMTP provider adapter seam", () => {
   it("verifies every mail capability with owned synthetic messages through real protocols", async () => {
     const provider = new ImapSmtpProvider({
-      grant: { grantId: "synthetic-mailbox", label: "Synthetic mailbox", provider: "imap-smtp" },
+      grant: { grantId: "synthetic-mailbox", label: "Synthetic mailbox", provider: "google-oauth" },
       connections: {
         async getConnection() {
           return {
