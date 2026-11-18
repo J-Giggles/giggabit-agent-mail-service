@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { HostMailGateway } from "./gateway.js";
 import type { GatewayAuditEvent } from "./gateway.js";
 import type { MailCircuitBreaker } from "./circuit-breaker.js";
+import type { AgentPrincipal } from "./identity.js";
 import type { MailMessageDetail, MailboxProvider } from "./provider.js";
 
 const TEST_FOLDER = "Agent Gateway Test";
@@ -34,11 +35,6 @@ export interface ProviderVerificationResult {
   providerIdentifiers: string[];
 }
 
-function requireCapability<T>(value: T | undefined, name: string): T {
-  if (!value) throw new Error(`provider verification requires ${name}`);
-  return value;
-}
-
 function proveOwnership(message: MailMessageDetail, tag: string): void {
   if (!message.subject.includes(tag)) {
     throw new Error("provider verification refused to mutate a message it does not own");
@@ -63,7 +59,6 @@ export class ProviderVerificationHarness {
   }
 
   async run(): Promise<ProviderVerificationResult> {
-    const { testFolder, folderCreation } = await this.#prepareFolders();
     const gateway = new HostMailGateway({
       providers: [this.#provider],
       audit: this.#audit,
@@ -76,6 +71,7 @@ export class ProviderVerificationHarness {
       expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
     };
     const grantId = this.#provider.grant.grantId;
+    const { testFolder, folderCreation } = await this.#prepareFolders(gateway, principal);
     const tag = `agent-gateway-test-${randomUUID()}`;
     const subject = `Synthetic provider verification ${tag}`;
     const sent = await gateway.callTool(principal, "send", {
@@ -165,7 +161,7 @@ export class ProviderVerificationHarness {
     };
   }
 
-  async #prepareFolders(): Promise<{
+  async #prepareFolders(gateway: HostMailGateway, principal: AgentPrincipal): Promise<{
     testFolder: string;
     folderCreation: ProviderVerificationResult["folderCreation"];
   }> {
@@ -178,11 +174,13 @@ export class ProviderVerificationHarness {
       return { testFolder: folder.path, folderCreation: "unsupported (unpinned namespace)" };
     }
 
-    const ensureFolder = requireCapability(this.#provider.ensureFolder?.bind(this.#provider), "folder creation");
-    const testFolder = await ensureFolder(TEST_FOLDER);
-    await ensureFolder("Drafts");
-    await ensureFolder("Trash");
-    return { testFolder, folderCreation: "verified" };
+    const create = (folder: string) => gateway.callTool(principal, "folders", {
+      action: "create", grant_id: this.#provider.grant.grantId, folder,
+    });
+    const testFolder = await create(TEST_FOLDER);
+    await create("Drafts");
+    await create("Trash");
+    return { testFolder: String(testFolder.folder), folderCreation: "verified" };
   }
 
   async #waitFor(folder: string, tag: string, minimum: number) {
