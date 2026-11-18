@@ -15,23 +15,42 @@ function mailbox(path: string, ...flags: string[]): ListResponse {
 type Namespace = { prefix: string; delimiter: string | null };
 type WireNamespace = { prefix: string | Buffer; delimiter: string | null };
 
-function imapProvider(namespace: Namespace, personal: WireNamespace[] = [namespace], advertisesNamespace = true) {
+function wireNamespace(entries: WireNamespace[]) {
+  return entries.map(({ prefix, delimiter }) => [
+    { value: prefix }, delimiter === null ? null : { value: delimiter },
+  ]);
+}
+
+function imapProvider(
+  namespace: Namespace,
+  personal: WireNamespace[] = [namespace],
+  extensions: { mode?: "namespace" | "rev2" | "rev1"; other?: WireNamespace[]; shared?: WireNamespace[] } = {},
+) {
+  const list = vi.fn<() => Promise<ListResponse[]>>();
+  const mergedList = vi.spyOn(ImapFlow.prototype, "list").mockImplementation(() => list());
   vi.spyOn(ImapFlow.prototype, "connect").mockImplementation(async function (this: ImapFlow) {
-    if (advertisesNamespace) this.capabilities.set("NAMESPACE", true);
+    if (extensions.mode === "rev2") this.capabilities.set("IMAP4rev2", true);
+    else if (extensions.mode !== "rev1") this.capabilities.set("NAMESPACE", true);
     Object.assign(this, {
       namespace,
       async exec(command: string, _attributes: unknown, options: {
         untagged: Record<string, (reply: unknown) => Promise<void>>;
       }) {
         if (command === "LIST") {
-          await options.untagged.LIST?.({ attributes: [[], { value: "/" }, { value: "" }] });
+          for (const item of await list()) {
+            if (!item.listed) continue;
+            await options.untagged.LIST?.({
+              attributes: [[...item.flags].map((value) => ({ value })), { value: item.delimiter }, { value: item.pathAsListed }],
+            });
+          }
         } else {
           expect(command).toBe("NAMESPACE");
           await options.untagged.NAMESPACE?.({
-            attributes: [personal.map(({ prefix, delimiter }) => [
-              { value: prefix },
-              delimiter === null ? null : { value: delimiter },
-            ]), null, null],
+            attributes: [
+              wireNamespace(personal),
+              extensions.other ? wireNamespace(extensions.other) : null,
+              extensions.shared ? wireNamespace(extensions.shared) : null,
+            ],
           });
         }
         return { next: () => undefined };
@@ -39,7 +58,6 @@ function imapProvider(namespace: Namespace, personal: WireNamespace[] = [namespa
     });
   });
   vi.spyOn(ImapFlow.prototype, "logout").mockResolvedValue(undefined);
-  const list = vi.spyOn(ImapFlow.prototype, "list");
   const create = vi.spyOn(ImapFlow.prototype, "mailboxCreate");
   const provider = new ImapSmtpProvider({
     grant: { grantId: "synthetic", label: "Synthetic", provider: "imap-smtp" },
@@ -49,7 +67,7 @@ function imapProvider(namespace: Namespace, personal: WireNamespace[] = [namespa
       smtp: { host: "localhost", port: 25, secure: false },
     }) },
   });
-  return { provider, list, create };
+  return { provider, list, mergedList, create };
 }
 
 afterEach(() => vi.restoreAllMocks());
@@ -115,11 +133,11 @@ describe("IMAP folder creation", () => {
   });
 
   it("refuses a listed literal slash instead of creating a different folder", async () => {
-    const { provider, list, create } = imapProvider({ prefix: "INBOX.", delimiter: "." });
-    list.mockResolvedValue([mailbox("INBOX.A/B")]);
-    create.mockResolvedValue({ path: "INBOX.INBOX.A.B", created: true });
+    const { provider, list, create } = imapProvider({ prefix: "", delimiter: "." });
+    list.mockResolvedValue([mailbox("A/B")]);
+    create.mockResolvedValue({ path: "A.B", created: true });
 
-    await expect(provider.ensureFolder("INBOX.A/B")).rejects.toThrow("slash only as a folder separator");
+    await expect(provider.ensureFolder("A/B")).rejects.toThrow("slash only as a folder separator");
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -155,7 +173,7 @@ describe("IMAP folder creation", () => {
   });
 
   it("requires NAMESPACE and does not fall back to a root LIST", async () => {
-    const { provider, list, create } = imapProvider({ prefix: "", delimiter: "/" }, [], false);
+    const { provider, list, create } = imapProvider({ prefix: "", delimiter: "/" }, [], { mode: "rev1" });
     await expect(provider.ensureFolder("Archive")).rejects.toThrow("Unsupported IMAP personal namespace");
     expect(list).not.toHaveBeenCalled();
     expect(create).not.toHaveBeenCalled();
@@ -187,12 +205,85 @@ describe("IMAP folder creation", () => {
     expect(list).toHaveBeenCalledTimes(6);
   });
 
-  it("refuses a trailing native delimiter before CREATE", async () => {
+  it("refuses a native dot anywhere in a segment on a dot-delimited server", async () => {
     const { provider, list, create } = imapProvider({ prefix: "INBOX.", delimiter: "." });
     list.mockResolvedValue([]);
     create.mockResolvedValue({ path: "INBOX.Reports.", created: true });
 
-    await expect(provider.ensureFolder("Reports.")).rejects.toThrow("trailing hierarchy delimiter");
+    for (const path of ["Reports.", "Finance.Receipts", "INBOX.A/B"]) {
+      await expect(provider.ensureFolder(path)).rejects.toThrow("cannot contain the server hierarchy delimiter");
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("keeps a dot literal inside a segment on a slash-delimited server", async () => {
+    const { provider, list, create } = imapProvider({ prefix: "", delimiter: "/" });
+    const path = "Finance.Receipts";
+    list.mockResolvedValue([]);
+    create.mockResolvedValue({ path, created: true });
+
+    await expect(provider.ensureFolder(path)).resolves.toBe(path);
+    expect(create).toHaveBeenCalledExactlyOnceWith(path);
+  });
+
+  it("refuses paths under shared and other-users namespace prefixes before LIST or CREATE", async () => {
+    const personal = { prefix: "", delimiter: "/" };
+    const { provider, list, create } = imapProvider(personal, [personal], {
+      shared: [{ prefix: "Public Folders/", delimiter: "/" }],
+      other: [{ prefix: "Other Users/", delimiter: "/" }],
+    });
+    list.mockResolvedValue([]);
+    create.mockResolvedValue({ path: "Public Folders/Archive", created: true });
+
+    for (const path of ["Public Folders/Archive", "public folders/Archive", "other users/Archive"]) {
+      await expect(provider.ensureFolder(path)).rejects.toThrow("outside the personal namespace");
+    }
+    expect(list).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("refuses the NIL mailbox token in any segment", async () => {
+    const { provider, list, create } = imapProvider({ prefix: "", delimiter: "/" });
+    list.mockResolvedValue([]);
+    create.mockResolvedValue({ path: "NIL", created: true });
+
+    for (const path of ["NIL", "Archive/nIl"]) {
+      await expect(provider.ensureFolder(path)).rejects.toBeInstanceOf(FolderCreateRefusal);
+    }
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("keeps a selectable raw LIST row when LSUB would add Noselect", async () => {
+    const { provider, list, mergedList, create } = imapProvider({ prefix: "", delimiter: "/" });
+    list.mockResolvedValue([mailbox("Archive")]);
+    mergedList.mockResolvedValue([mailbox("Archive", "\\Noselect")]);
+    create.mockResolvedValue({ path: "Archive", created: false });
+
+    await expect(provider.ensureFolder("Archive")).resolves.toBe("Archive");
+    expect(mergedList).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("checks the exact selectable target before considering literal-slash lookalikes", async () => {
+    const { provider, list, create } = imapProvider({ prefix: "", delimiter: "." });
+    list.mockResolvedValueOnce([mailbox("A/B", "\\Noselect"), mailbox("A.B")])
+      .mockResolvedValueOnce([mailbox("A/B"), mailbox("A.B")])
+      .mockResolvedValueOnce([mailbox("A/B", "\\Noselect")]);
+    create.mockResolvedValue({ path: "A.B", created: true });
+
+    await expect(provider.ensureFolder("A/B")).resolves.toBe("A.B");
+    await expect(provider.ensureFolder("A/B")).resolves.toBe("A.B");
+    expect(create).not.toHaveBeenCalled();
+    await expect(provider.ensureFolder("A/B")).resolves.toBe("A.B");
+    expect(create).toHaveBeenCalledExactlyOnceWith("A.B");
+  });
+
+  it("accepts an explicit NAMESPACE reply on an active IMAP4rev2 connection", async () => {
+    const personal = { prefix: "", delimiter: "/" };
+    const { provider, list, create } = imapProvider(personal, [personal], { mode: "rev2" });
+    list.mockResolvedValue([mailbox("Archive")]);
+
+    await expect(provider.ensureFolder("Archive")).resolves.toBe("Archive");
     expect(create).not.toHaveBeenCalled();
   });
 
