@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { ImapSmtpProvider } from "./imap-smtp-provider.js";
@@ -28,5 +29,12 @@ describe.skipIf(!enabled)("IMAP/SMTP provider adapter seam", () => {
     await expect(
       new ProviderVerificationHarness({ provider, testRecipient: "test1@localhost", pollIntervalMs: 50 }).run(),
     ).resolves.toMatchObject({ drafted: 1, replied: 1, moved: 2, trashed: 3 });
+
+    const parent = `Synthetic-${randomUUID()}`;
+    const path = `${parent}/Receipts`;
+    await Promise.all([provider.ensureFolder(path), provider.ensureFolder(path)]);
+    await provider.ensureFolder(path);
+    const folders = await provider.listFolders();
+    expect(folders.filter((folder) => folder.path.includes(parent) && folder.name === "Receipts")).toHaveLength(1);
   }, 15_000);
 });

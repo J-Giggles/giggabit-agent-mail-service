@@ -57,7 +57,9 @@ function registerGatewayTools(server: McpServer, gateway: HostMailGateway, princ
       name,
       {
         description,
-        inputSchema: commonInputSchema,
+        inputSchema: name === "folders"
+          ? { action: z.enum(["list", "create"]), grant_id: commonInputSchema.grant_id, folder: commonInputSchema.folder }
+          : commonInputSchema,
         annotations: {
           readOnlyHint: readOnly,
           destructiveHint: name === "magic_link" || name === "messages" || name === "send",
@@ -65,9 +67,9 @@ function registerGatewayTools(server: McpServer, gateway: HostMailGateway, princ
           openWorldHint: name === "send",
         },
       },
-      async (input) => {
+      async (input: Record<string, unknown>) => {
         try {
-          const result = await gateway.callTool(principal, name, input as Record<string, unknown>);
+          const result = await gateway.callTool(principal, name, input);
           return {
             content: [{ type: "text" as const, text: JSON.stringify(result) }],
             structuredContent: result,
@@ -82,7 +84,7 @@ function registerGatewayTools(server: McpServer, gateway: HostMailGateway, princ
     );
   };
 
-  register("folders", "List folders for an explicitly connected mailbox grant.", true);
+  register("folders", "List or create folders for an explicitly connected mailbox grant. Use / for nested paths.", false);
   register("messages", "Search, read, move, and recoverably trash mailbox messages.", false);
   if (gateway.magicLinkEnabled) {
     register(

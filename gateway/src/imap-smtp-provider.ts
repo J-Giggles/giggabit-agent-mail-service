@@ -271,9 +271,22 @@ export class ImapSmtpProvider implements MailboxProvider {
 
   async ensureFolder(folder: string): Promise<void> {
     if (!folder.trim()) throw new Error("mail folder name is required");
+    const segments = folder.split("/");
+    if (segments.some((segment) => !segment.trim())) throw new Error("invalid mail folder path");
     await this.#withImap(async (client) => {
-      if ((await client.list()).some((item) => item.path === folder)) return;
-      await client.mailboxCreate(folder);
+      const folders = await client.list();
+      const inbox = folders.find((item) => item.path === "INBOX");
+      const path = segments.join(inbox?.delimiter || "/");
+      const exists = (items: ListResponse[]) => items.some((item) =>
+        item.path === path || (item.path === "INBOX" && path.toUpperCase() === "INBOX"),
+      );
+      if (exists(folders)) return;
+      try {
+        await client.mailboxCreate(segments);
+      } catch (error) {
+        // Some servers return a generic failure if another request created the folder first.
+        if (!exists(await client.list())) throw error;
+      }
     });
   }
 
