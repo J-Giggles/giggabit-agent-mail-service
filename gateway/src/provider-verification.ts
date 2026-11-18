@@ -7,6 +7,12 @@ import type { MailMessageDetail, MailboxProvider } from "./provider.js";
 
 const TEST_FOLDER = "Agent Gateway Test";
 
+export class VerificationTestFolderError extends Error {
+  constructor() {
+    super(`Create or fix the folder "${TEST_FOLDER}" in this mailbox, then rerun admin verify. It must be selectable.`);
+  }
+}
+
 export interface ProviderVerificationOptions {
   provider: MailboxProvider;
   testRecipient: string;
@@ -164,10 +170,10 @@ export class ProviderVerificationHarness {
     folderCreation: ProviderVerificationResult["folderCreation"];
   }> {
     if (this.#provider.grant.provider === "imap-smtp") {
-      const folders = await this.#provider.listFolders();
+      const folders = await this.#provider.listFolders({ selectableOnly: true });
       const [folder, duplicate] = folders.filter(({ name }) => name === TEST_FOLDER);
       if (!folder || duplicate) {
-        throw new Error(`Provision one selectable folder named "${TEST_FOLDER}" before verifying a password grant.`);
+        throw new VerificationTestFolderError();
       }
       return { testFolder: folder.path, folderCreation: "unsupported (unpinned namespace)" };
     }

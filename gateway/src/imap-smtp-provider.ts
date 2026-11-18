@@ -1,4 +1,4 @@
-import { ImapFlow, type FetchMessageObject, type ListResponse, type SearchObject } from "imapflow";
+import { ImapFlow, type FetchMessageObject, type ListOptions, type ListResponse, type SearchObject } from "imapflow";
 import { simpleParser, type AddressObject } from "mailparser";
 import { createTransport } from "nodemailer";
 import { z } from "zod";
@@ -209,8 +209,8 @@ async function composeRaw(connection: MailboxConnection, input: SendMailInput, h
   return Buffer.concat(chunks);
 }
 
-async function listMailboxes(client: ImapFlow): Promise<ListResponse[]> {
-  return (await client.list()).map((folder) => {
+async function listMailboxes(client: ImapFlow, options?: ListOptions): Promise<ListResponse[]> {
+  return (await client.list(options)).map((folder) => {
     const wireName: unknown = folder.pathAsListed;
     return Buffer.isBuffer(wireName) ? { ...folder, pathAsListed: wireName.toString("utf8") } : folder;
   });
@@ -235,6 +235,10 @@ const asciiFold = (name: string) => name.replace(/[A-Z]/g, (letter) => letter.to
 const isFolderSegment = (segment: string) =>
   folderSegment.test(segment) && !segment.endsWith(" ") && asciiFold(segment) !== "nil";
 const wireText = (value: string | Buffer) => typeof value === "string" ? value : value.toString("utf8");
+
+function isSelectableMailbox(flags: Iterable<string | Buffer>): boolean {
+  return !Array.from(flags).some((flag) => ["\\nonexistent", "\\noselect"].includes(asciiFold(wireText(flag))));
+}
 
 const folderCreateProviders = new Set(["google-oauth", "microsoft-oauth"]);
 const supportedFolderNamespace = {
@@ -340,7 +344,7 @@ async function selectableMailboxNames(client: ImapFlow, path: string, utf8: bool
     const parsed = listReply.safeParse(reply);
     if (!parsed.success) return [];
     const [flags, , wireName] = parsed.data.attributes;
-    if (flags.some((flag) => ["\\nonexistent", "\\noselect"].includes(asciiFold(wireText(flag))))) return [];
+    if (!isSelectableMailbox(flags)) return [];
     const name = decodeListedName(wireText(wireName), utf8);
     return name === undefined ? [] : [name];
   });
@@ -399,12 +403,16 @@ export class ImapSmtpProvider implements MailboxProvider {
     this.#connections = options.connections;
   }
 
-  async listFolders(): Promise<MailFolder[]> {
+  async listFolders({ selectableOnly = false } = {}): Promise<MailFolder[]> {
+    // ImapFlow 1.4.7 supports listOnly but omits it from ListOptions.
+    const listOnly: ListOptions & { listOnly: true } = { listOnly: true };
     return this.#withImap(async (client) =>
-      (await listMailboxes(client)).map((folder) => {
-        const role = folderRole(folder);
-        return { path: folder.path, name: folder.name, ...(role ? { role } : {}) };
-      }),
+      (await listMailboxes(client, selectableOnly ? listOnly : undefined))
+        .filter((folder) => !selectableOnly || isSelectableMailbox(folder.flags))
+        .map((folder) => {
+          const role = folderRole(folder);
+          return { path: folder.path, name: folder.name, ...(role ? { role } : {}) };
+        }),
     );
   }
 

@@ -119,7 +119,7 @@ export interface DownloadAttachmentResult {
 
 export interface MailboxProvider {
   grant: MailboxGrantDescriptor;
-  listFolders(): Promise<MailFolder[]>;
+  listFolders(options?: { selectableOnly?: boolean }): Promise<MailFolder[]>;
   ensureFolder?(folder: string): Promise<string>;
   search(input: SearchMailInput): Promise<MailMessageSummary[]>;
   read(input: ReadMailInput): Promise<MailMessageDetail>;
