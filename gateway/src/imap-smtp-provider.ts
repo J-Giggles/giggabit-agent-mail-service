@@ -129,14 +129,12 @@ const specialUseRoles = new Map<string, NonNullable<MailFolder["role"]>>([
   ["\\trash", "trash"],
 ]);
 
-function folderRole(folder: ListResponse, listOnly: boolean): MailFolder["role"] {
-  // ImapFlow fills specialUse after the LIST-only return.
-  const flags = listOnly ? folder.flags : [folder.specialUse];
+function folderRole(path: string, flags: Iterable<string | Buffer | undefined>): MailFolder["role"] {
   for (const flag of flags) {
-    const role = flag && specialUseRoles.get(asciiFold(flag));
+    const role = flag && specialUseRoles.get(asciiFold(wireText(flag)));
     if (role) return role;
   }
-  return folder.path.toUpperCase() === "INBOX" ? "inbox" : undefined;
+  return path.toUpperCase() === "INBOX" ? "inbox" : undefined;
 }
 
 function searchCriteria(query: string): SearchObject {
@@ -255,9 +253,9 @@ function usesImap4Rev2(client: ImapFlow): boolean {
       !client.capabilities.has("IMAP4rev1") && !client.capabilities.has("IMAP4REV1"));
 }
 
-type ImapStringToken = { type: "STRING"; value: string };
+type ImapToken = { type: "STRING" | "ATOM"; value: string };
 
-async function rawImapReplies(client: ImapFlow, command: "NAMESPACE" | "LIST", attributes: ImapStringToken[] | false) {
+async function rawImapReplies(client: ImapFlow, command: "NAMESPACE" | "LIST", attributes: (ImapToken | ImapToken[])[] | false) {
   const exec = "exec" in client ? client.exec : undefined;
   if (typeof exec !== "function") throw new Error("raw IMAP command unavailable");
   const replies: unknown[] = [];
@@ -335,19 +333,24 @@ function decodeListedName(name: string, utf8: boolean): string | undefined {
   }
 }
 
-async function selectableMailboxNames(client: ImapFlow, path: string, utf8: boolean): Promise<string[]> {
-  // ImapFlow's convenience list merges LSUB flags by normalized path. Use only raw LIST rows here.
-  return (await rawImapReplies(client, "LIST", [
-    { type: "STRING", value: "" },
-    { type: "STRING", value: path },
-  ])).flatMap((reply) => {
+async function selectableListRows(client: ImapFlow, attributes: (ImapToken | ImapToken[])[], utf8: boolean) {
+  return (await rawImapReplies(client, "LIST", attributes)).flatMap((reply) => {
     const parsed = listReply.safeParse(reply);
     if (!parsed.success) return [];
-    const [flags, , wireName] = parsed.data.attributes;
+    const [flags, delimiter, wireName] = parsed.data.attributes;
     if (!isSelectableMailbox(flags)) return [];
-    const name = decodeListedName(wireText(wireName), utf8);
-    return name === undefined ? [] : [name];
+    const path = decodeListedName(wireText(wireName), utf8);
+    return path === undefined ? [] : [{ path, flags, delimiter }];
   });
+}
+
+async function selectableMailboxNames(client: ImapFlow, path: string, utf8: boolean): Promise<string[]> {
+  // ImapFlow's convenience list merges LSUB flags by normalized path. Use only raw LIST rows here.
+  const rows = await selectableListRows(client, [
+    { type: "STRING", value: "" },
+    { type: "STRING", value: path },
+  ], utf8);
+  return rows.map((row) => row.path);
 }
 
 async function listMailFolders(client: ImapFlow, selectableOnly: boolean): Promise<MailFolder[]> {
@@ -355,9 +358,36 @@ async function listMailFolders(client: ImapFlow, selectableOnly: boolean): Promi
   const listOnly: ListOptions & { listOnly: true } = { listOnly: true };
   const folders = await listMailboxes(client, selectableOnly ? listOnly : undefined);
   return folders.filter((folder) => !selectableOnly || isSelectableMailbox(folder.flags)).map((folder) => {
-    const role = folderRole(folder, selectableOnly);
+    // ImapFlow fills specialUse after the LIST-only return.
+    const role = folderRole(folder.path, selectableOnly ? folder.flags : [folder.specialUse]);
     return { path: folder.path, name: folder.name, ...(role ? { role } : {}) };
   });
+}
+
+async function listSelectableRoles(client: ImapFlow): Promise<MailFolder[]> {
+  if (client.capabilities.has("SPECIAL-USE") || client.capabilities.has("LIST-EXTENDED")) {
+    try {
+      const rows = await selectableListRows(client, [
+        { type: "STRING", value: "" },
+        { type: "STRING", value: "*" },
+        { type: "ATOM", value: "RETURN" },
+        [{ type: "ATOM", value: "SPECIAL-USE" }],
+      ], client.enabled.has("UTF8=ACCEPT") || usesImap4Rev2(client));
+      return rows.map(({ path, flags, delimiter }) => {
+        const parsedDelimiter = namespaceDelimiter.safeParse(delimiter);
+        const name = parsedDelimiter.success && parsedDelimiter.data.length === 1
+          ? path.slice(path.lastIndexOf(parsedDelimiter.data) + 1)
+          : path;
+        const role = folderRole(path, flags);
+        return { path, name, ...(role ? { role } : {}) };
+      });
+    } catch (error) {
+      // A server can implement LIST-EXTENDED without the SPECIAL-USE return option.
+      if (!(error instanceof Error) || !("responseStatus" in error) ||
+        (error.responseStatus !== "BAD" && error.responseStatus !== "NO")) throw error;
+    }
+  }
+  return listMailFolders(client, true);
 }
 
 function currentUidValidity(client: ImapFlow): bigint {
@@ -409,7 +439,17 @@ export class ImapSmtpProvider implements MailboxProvider {
   }
 
   async listFolders({ selectableOnly = false } = {}): Promise<MailFolder[]> {
-    return this.#withImap((client) => listMailFolders(client, selectableOnly));
+    return this.#withImap((client) => selectableOnly && this.grant.provider !== "imap-smtp"
+      ? listSelectableRoles(client)
+      : listMailFolders(client, selectableOnly));
+  }
+
+  async #findOperationFolder(client: ImapFlow, role: "drafts" | "trash", fallback: string): Promise<string> {
+    if (this.grant.provider !== "imap-smtp") {
+      const preferred = findFolder(await listSelectableRoles(client), role);
+      if (preferred) return preferred;
+    }
+    return findFolder(await listMailFolders(client, false), role) ?? fallback;
   }
 
   async ensureFolder(folder: string): Promise<string> {
@@ -573,8 +613,7 @@ export class ImapSmtpProvider implements MailboxProvider {
     const connection = await this.#connections.getConnection(this.grant.grantId);
     const raw = await composeRaw(connection, input);
     return this.#withImap(async (client) => {
-      const folders = await listMailFolders(client, this.grant.provider !== "imap-smtp");
-      const folder = findFolder(folders, "drafts") ?? "Drafts";
+      const folder = await this.#findOperationFolder(client, "drafts", "Drafts");
       const result = await client.append(folder, raw, ["\\Draft", "\\Seen"], new Date());
       if (!result) throw new Error("draft could not be stored");
       return {
@@ -616,8 +655,7 @@ export class ImapSmtpProvider implements MailboxProvider {
     const client = createImapClient(connection);
     await client.connect();
     try {
-      const folders = await listMailFolders(client, this.grant.provider !== "imap-smtp");
-      const trashFolder = findFolder(folders, "trash") ?? "Trash";
+      const trashFolder = await this.#findOperationFolder(client, "trash", "Trash");
       const reference = parseMessageReference(input.messageRef, input.folder);
       const lock = await client.getMailboxLock(input.folder);
       try {
