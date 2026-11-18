@@ -18,7 +18,7 @@ import { mailboxCliOptions, type MailboxCliOptions } from "./mailbox-cli-options
 import { microsoftOAuthBase, microsoftTenant } from "./microsoft-tenant.js";
 import { VaultMailboxConnectionSource } from "./oauth-connection-source.js";
 import { defaultOutboundLimits, readOutboundLimits } from "./outbound-limits.js";
-import { ProviderVerificationHarness } from "./provider-verification.js";
+import { ProviderVerificationHarness, VerificationTestFolderError } from "./provider-verification.js";
 import { CredentialVault, type MailboxSecret } from "./vault.js";
 
 const input = process.stdin;
@@ -381,7 +381,12 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   void main()
-    .catch(() => {
+    .catch((error: unknown) => {
+      if (error instanceof VerificationTestFolderError) {
+        process.stderr.write(`${error.message}\n`);
+        process.exitCode = 2;
+        return;
+      }
       process.stderr.write("giggabit-agent-mail-service-admin could not complete the requested operation.\n");
       process.exitCode = 1;
     })

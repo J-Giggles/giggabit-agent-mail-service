@@ -3,9 +3,18 @@ import { randomUUID } from "node:crypto";
 import { HostMailGateway } from "./gateway.js";
 import type { GatewayAuditEvent } from "./gateway.js";
 import type { MailCircuitBreaker } from "./circuit-breaker.js";
-import type { MailMessageDetail, MailboxProvider } from "./provider.js";
+import type { AgentPrincipal } from "./identity.js";
+import { findFolder, type MailMessageDetail, type MailboxProvider } from "./provider.js";
 
 const TEST_FOLDER = "Agent Gateway Test";
+
+export class VerificationTestFolderError extends Error {
+  constructor(specialUse?: "Drafts" | "Trash") {
+    super(specialUse
+      ? `Set up a selectable ${specialUse} folder with its IMAP special-use role, then rerun admin verify.`
+      : `Create or fix the folder "${TEST_FOLDER}" in this mailbox, then rerun admin verify. It must be selectable.`);
+  }
+}
 
 export interface ProviderVerificationOptions {
   provider: MailboxProvider;
@@ -18,6 +27,7 @@ export interface ProviderVerificationOptions {
 
 export interface ProviderVerificationResult {
   tag: string;
+  folderCreation: "verified" | "unsupported (unpinned namespace)";
   searched: number;
   read: number;
   drafted: number;
@@ -25,11 +35,6 @@ export interface ProviderVerificationResult {
   moved: number;
   trashed: number;
   providerIdentifiers: string[];
-}
-
-function requireCapability<T>(value: T | undefined, name: string): T {
-  if (!value) throw new Error(`provider verification requires ${name}`);
-  return value;
 }
 
 function proveOwnership(message: MailMessageDetail, tag: string): void {
@@ -56,7 +61,6 @@ export class ProviderVerificationHarness {
   }
 
   async run(): Promise<ProviderVerificationResult> {
-    const ensureFolder = requireCapability(this.#provider.ensureFolder?.bind(this.#provider), "folder creation");
     const gateway = new HostMailGateway({
       providers: [this.#provider],
       audit: this.#audit,
@@ -69,10 +73,7 @@ export class ProviderVerificationHarness {
       expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
     };
     const grantId = this.#provider.grant.grantId;
-    await ensureFolder(TEST_FOLDER);
-    await ensureFolder("Drafts");
-    await ensureFolder("Trash");
-
+    const { testFolder, folderCreation } = await this.#prepareFolders(gateway, principal);
     const tag = `agent-gateway-test-${randomUUID()}`;
     const subject = `Synthetic provider verification ${tag}`;
     const sent = await gateway.callTool(principal, "send", {
@@ -130,20 +131,20 @@ export class ProviderVerificationHarness {
         grant_id: grantId,
         folder: "INBOX",
         message_ref: detail.messageRef,
-        destination: TEST_FOLDER,
+        destination: testFolder,
       });
       providerIdentifiers.push(String(movedMessage.message_ref));
       moved += 1;
     }
-    const movedMessages = await this.#waitFor(TEST_FOLDER, tag, inboxMessages.length);
+    const movedMessages = await this.#waitFor(testFolder, tag, inboxMessages.length);
     for (const message of movedMessages) {
-      const detail = await this.#provider.read({ folder: TEST_FOLDER, messageRef: message.messageRef });
+      const detail = await this.#provider.read({ folder: testFolder, messageRef: message.messageRef });
       read += 1;
       proveOwnership(detail, tag);
       const trashedMessage = await gateway.callTool(principal, "messages", {
         action: "trash",
         grant_id: grantId,
-        folder: TEST_FOLDER,
+        folder: testFolder,
         message_ref: detail.messageRef,
       });
       providerIdentifiers.push(String(trashedMessage.message_ref));
@@ -151,6 +152,7 @@ export class ProviderVerificationHarness {
     }
     return {
       tag,
+      folderCreation,
       searched: inboxMessages.length + movedMessages.length,
       read,
       drafted: 1,
@@ -159,6 +161,27 @@ export class ProviderVerificationHarness {
       trashed,
       providerIdentifiers,
     };
+  }
+
+  async #prepareFolders(gateway: HostMailGateway, principal: AgentPrincipal): Promise<{
+    testFolder: string;
+    folderCreation: ProviderVerificationResult["folderCreation"];
+  }> {
+    const folders = await this.#provider.listFolders({ selectableOnly: true });
+    if (this.#provider.grant.provider === "imap-smtp") {
+      const [folder, duplicate] = folders.filter(({ name }) => name === TEST_FOLDER);
+      if (!folder || duplicate) {
+        throw new VerificationTestFolderError();
+      }
+      return { testFolder: folder.path, folderCreation: "unsupported (unpinned namespace)" };
+    }
+
+    if (!findFolder(folders, "drafts")) throw new VerificationTestFolderError("Drafts");
+    if (!findFolder(folders, "trash")) throw new VerificationTestFolderError("Trash");
+    const testFolder = await gateway.callTool(principal, "folders", {
+      action: "create", grant_id: this.#provider.grant.grantId, folder: TEST_FOLDER,
+    });
+    return { testFolder: String(testFolder.folder), folderCreation: "verified" };
   }
 
   async #waitFor(folder: string, tag: string, minimum: number) {

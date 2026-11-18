@@ -218,12 +218,27 @@ export class HostMailGateway {
     }
 
     if (tool === "folders") {
-      if (input.action !== "list") {
-        throw new Error("unsupported folders action");
+      if (input.action === "list") {
+        const folders = await provider.listFolders();
+        await this.#record(principal, grantId, "folders.list");
+        return { action: "list", grant_id: grantId, folders };
       }
-      const folders = await provider.listFolders();
-      await this.#record(principal, grantId, "folders.list");
-      return { action: "list", grant_id: grantId, folders };
+      if (input.action === "create") {
+        if (!provider.ensureFolder) throw new Error("mailbox provider does not support creating folders");
+        const folder = requiredString(input, "folder");
+        this.#circuitBreaker.reserveFolderCreation(grantId);
+        await this.#record(principal, grantId, "folders.create.requested", folder);
+        let resolvedFolder: string;
+        try {
+          resolvedFolder = await provider.ensureFolder(folder);
+        } catch (error) {
+          await this.#record(principal, grantId, "folders.create.failed", folder);
+          throw error;
+        }
+        await this.#record(principal, grantId, "folders.create", resolvedFolder);
+        return { action: "create", grant_id: grantId, folder: resolvedFolder };
+      }
+      throw new Error("unsupported folders action");
     }
 
     if (tool === "messages") {

@@ -20,8 +20,13 @@ variable.
 
 Prefer implicit TLS where the provider supports it. For submission on port
 587, use the provider's STARTTLS requirements. Do not disable certificate
-verification or use plaintext IMAP/SMTP. After onboarding, run the admin
-verification command and restart the service.
+verification or use plaintext IMAP/SMTP.
+
+Before running the admin verification command, provision one selectable
+folder named `Agent Gateway Test` in the provider and make Drafts and Trash
+available. Verification uses their existing mailboxes and reports folder
+creation as `unsupported (unpinned namespace)`. Restart the service after
+verification.
 
 Provider-specific passwords, app-password policy, quotas, and account recovery
 remain the operator's responsibility.

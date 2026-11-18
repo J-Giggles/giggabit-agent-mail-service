@@ -1,3 +1,18 @@
+const folderCreateRefusals = {
+  unsupportedNamespace: "Unsupported IMAP personal namespace.",
+  outsidePersonalNamespace: "The requested path is outside the personal namespace.",
+  invalidPath: "Use slash only as a folder separator and supply valid namespace-relative segments.",
+  delimiterInSegment: "A folder segment cannot contain the server hierarchy delimiter. Use slash to separate segments.",
+  unconfirmedPath: "A selectable mailbox has a different spelling. Use the exact path from folders.list.",
+  creationUnconfirmed: "The server did not confirm folder creation. Check folders.list before retrying.",
+};
+
+export class FolderCreateRefusal extends Error {
+  constructor(reason: keyof typeof folderCreateRefusals) {
+    super(folderCreateRefusals[reason]);
+  }
+}
+
 export interface MailboxGrantDescriptor {
   grantId: string;
   label: string;
@@ -14,6 +29,10 @@ export interface MailFolder {
   path: string;
   name: string;
   role?: "archive" | "drafts" | "inbox" | "sent" | "spam" | "trash";
+}
+
+export function findFolder(folders: readonly MailFolder[], role: NonNullable<MailFolder["role"]>): string | undefined {
+  return folders.find((folder) => folder.role === role)?.path;
 }
 
 export interface MailMessageSummary {
@@ -104,8 +123,8 @@ export interface DownloadAttachmentResult {
 
 export interface MailboxProvider {
   grant: MailboxGrantDescriptor;
-  listFolders(): Promise<MailFolder[]>;
-  ensureFolder?(folder: string): Promise<void>;
+  listFolders(options?: { selectableOnly?: boolean }): Promise<MailFolder[]>;
+  ensureFolder?(folder: string): Promise<string>;
   search(input: SearchMailInput): Promise<MailMessageSummary[]>;
   read(input: ReadMailInput): Promise<MailMessageDetail>;
   send?(input: SendMailInput): Promise<SendMailResult>;
