@@ -269,11 +269,9 @@ export class ImapSmtpProvider implements MailboxProvider {
     );
   }
 
-  async ensureFolder(folder: string): Promise<void> {
+  async ensureFolder(folder: string): Promise<string> {
     if (!folder.trim()) throw new Error("mail folder name is required");
-    const segments = folder.split("/");
-    if (segments.some((segment) => !segment.trim())) throw new Error("invalid mail folder path");
-    await this.#withImap(async (client) => {
+    return this.#withImap(async (client) => {
       // ImapFlow sets the personal namespace during connect, including its LIST fallback.
       const namespace = "namespace" in client ? client.namespace : undefined;
       if (!namespace || typeof namespace !== "object" || !("prefix" in namespace) ||
@@ -281,26 +279,34 @@ export class ImapSmtpProvider implements MailboxProvider {
         throw new Error("mailbox namespace is unavailable");
       }
       const delimiter = typeof namespace.delimiter === "string" ? namespace.delimiter : "";
+      if (delimiter && folder.endsWith(delimiter)) throw new Error("mail folder has a trailing hierarchy delimiter");
+      const leadingSlash = delimiter === "/" && namespace.prefix.startsWith("/") && folder.startsWith(namespace.prefix);
+      const segments = (leadingSlash ? folder.slice(1) : folder).split("/");
+      if (segments.some((segment) => !segment.trim())) throw new Error("invalid mail folder path");
       if (!delimiter && segments.length > 1) throw new Error("server does not support nested folders");
-      const name = segments.join(delimiter);
+      const name = (leadingSlash ? "/" : "") + segments.join(delimiter);
       let path = name.startsWith(namespace.prefix) ? name : namespace.prefix + name;
       if (name.toUpperCase() === "INBOX") path = "INBOX";
 
-      const exists = async () => (await client.list()).some((item) =>
-        item.path === path && item.listed && ![...item.flags].some((flag) =>
+      const exists = async () => (await client.list()).some((item) => {
+        // ImapFlow can strip the first hierarchy delimiter from the decoded LIST path.
+        const stripped = delimiter && path.startsWith(delimiter) &&
+          item.pathAsListed.startsWith(delimiter) && item.path === path.slice(delimiter.length);
+        return (item.path === path || stripped) && item.listed && ![...item.flags].some((flag) =>
           ["\\nonexistent", "\\noselect"].includes(flag.toLowerCase()),
-        ),
-      );
-      if (await exists()) return;
+        );
+      });
+      if (await exists()) return path;
       try {
         const result = await client.mailboxCreate(path);
-        if (result?.created) return;
+        if (result?.created) return path;
       } catch (error) {
         // Some servers report only a generic error when another request wins CREATE.
-        if (await exists()) return;
+        if (await exists()) return path;
         throw error;
       }
       if (!(await exists())) throw new Error("mailbox creation did not produce a selectable folder");
+      return path;
     });
   }
 

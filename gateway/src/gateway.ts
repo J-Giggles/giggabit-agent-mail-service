@@ -228,14 +228,15 @@ export class HostMailGateway {
         const folder = requiredString(input, "folder");
         this.#circuitBreaker.reserveFolderCreation(grantId);
         await this.#record(principal, grantId, "folders.create.requested", folder);
+        let resolvedFolder: string;
         try {
-          await provider.ensureFolder(folder);
+          resolvedFolder = await provider.ensureFolder(folder);
         } catch (error) {
           await this.#record(principal, grantId, "folders.create.failed", folder);
           throw error;
         }
-        await this.#record(principal, grantId, "folders.create", folder);
-        return { action: "create", grant_id: grantId, folder };
+        await this.#record(principal, grantId, "folders.create", resolvedFolder);
+        return { action: "create", grant_id: grantId, folder: resolvedFolder };
       }
       throw new Error("unsupported folders action");
     }

@@ -6,7 +6,10 @@ import type { MailboxProvider } from "./provider.js";
 describe("Gateway mailbox write seam", () => {
   it("creates nested folders idempotently through the mailbox provider and audits each request", async () => {
     const folders = new Set<string>();
-    const ensureFolder = vi.fn(async (folder: string) => { folders.add(folder); });
+    const ensureFolder = vi.fn(async (folder: string) => {
+      folders.add(folder);
+      return folder;
+    });
     const provider: MailboxProvider = {
       grant: { grantId: "mailbox-1", label: "Test mailbox", provider: "fake" },
       ensureFolder,
@@ -49,7 +52,7 @@ describe("Gateway mailbox write seam", () => {
   });
 
   it("requires an audit attempt before the provider can create a folder", async () => {
-    const ensureFolder = vi.fn(async () => undefined);
+    const ensureFolder = vi.fn(async (folder: string) => folder);
     const provider: MailboxProvider = {
       grant: { grantId: "mailbox-1", label: "Test mailbox", provider: "fake" },
       ensureFolder,

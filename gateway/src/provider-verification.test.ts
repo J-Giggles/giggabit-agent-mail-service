@@ -8,7 +8,7 @@ describe("provider-safe verification harness", () => {
     const move = vi.fn();
     const provider: MailboxProvider = {
       grant: { grantId: "synthetic", label: "Synthetic", provider: "fake" },
-      ensureFolder: async () => undefined,
+      ensureFolder: async (folder) => folder,
       listFolders: async () => [],
       search: async () => [
         {

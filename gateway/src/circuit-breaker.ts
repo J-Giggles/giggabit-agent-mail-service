@@ -1,4 +1,5 @@
-import { chmodSync, mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
+import { uptime } from "node:os";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -40,7 +41,18 @@ export interface MailCircuitState {
 export interface MailCircuitStateStore {
   load(): MailCircuitState | undefined;
   save(state: MailCircuitState): void;
-  reserveFolderCreation(grantId: string, occurredAt: number): boolean;
+  reserveFolderCreation(grantId: string): boolean;
+}
+
+type BootClock = () => { bootId: string; elapsedMs: number };
+
+let linuxBootId: string | undefined;
+
+// Linux uptime is shared by service processes and independent of wall-clock changes.
+function readLinuxBootClock(): ReturnType<BootClock> {
+  linuxBootId ??= readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+  if (!linuxBootId) throw new Error("host boot identity is unavailable");
+  return { bootId: linuxBootId, elapsedMs: Math.floor(uptime() * 1000) };
 }
 
 function emptyState(): MailCircuitState {
@@ -71,17 +83,21 @@ function parseState(value: string): MailCircuitState {
 
 export class SqliteMailCircuitStateStore implements MailCircuitStateStore {
   readonly #database: DatabaseSync;
+  readonly #bootClock: BootClock;
 
-  constructor(path: string) {
+  constructor(path: string, bootClock: BootClock = readLinuxBootClock) {
+    this.#bootClock = bootClock;
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.#database = new DatabaseSync(path);
     chmodSync(path, 0o600);
-    this.#database.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;");
+    this.#database.exec(
+      "PRAGMA busy_timeout=1000; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA trusted_schema=OFF;",
+    );
     this.#database.exec(
       "CREATE TABLE IF NOT EXISTS circuit_state (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), state_json TEXT NOT NULL)",
     );
     this.#database.exec(
-      "CREATE TABLE IF NOT EXISTS folder_create_attempts (grant_id TEXT NOT NULL, occurred_at INTEGER NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS folder_create_slots (boot_id TEXT NOT NULL, grant_id TEXT NOT NULL, elapsed_at INTEGER NOT NULL)",
     );
   }
 
@@ -101,15 +117,16 @@ export class SqliteMailCircuitStateStore implements MailCircuitStateStore {
   }
 
   // Reserve a slot in a short transaction independent of outbound state updates.
-  reserveFolderCreation(grantId: string, occurredAt: number): boolean {
+  reserveFolderCreation(grantId: string): boolean {
     this.#database.exec("BEGIN IMMEDIATE");
     try {
-      this.#database.prepare("DELETE FROM folder_create_attempts WHERE occurred_at <= ?")
-        .run(occurredAt - MINUTE_MS);
+      const { bootId, elapsedMs } = this.#bootClock();
+      this.#database.prepare("DELETE FROM folder_create_slots WHERE boot_id <> ? OR elapsed_at <= ?")
+        .run(bootId, elapsedMs - MINUTE_MS);
       const result = this.#database.prepare(`
-        INSERT INTO folder_create_attempts (grant_id, occurred_at)
-        SELECT ?, ? WHERE (SELECT COUNT(*) FROM folder_create_attempts WHERE grant_id = ?) < ?
-      `).run(grantId, occurredAt, grantId, FOLDER_CREATES_PER_MINUTE);
+        INSERT INTO folder_create_slots (boot_id, grant_id, elapsed_at)
+        SELECT ?, ?, ? WHERE (SELECT COUNT(*) FROM folder_create_slots WHERE grant_id = ?) < ?
+      `).run(bootId, grantId, elapsedMs, grantId, FOLDER_CREATES_PER_MINUTE);
       this.#database.exec("COMMIT");
       return result.changes > 0;
     } catch (error) {
@@ -169,13 +186,13 @@ export class MailCircuitBreaker {
   }
 
   reserveFolderCreation(grantId: string): void {
-    const now = this.#now().getTime();
     if (this.#stateStore) {
-      if (!this.#stateStore.reserveFolderCreation(grantId, now)) {
+      if (!this.#stateStore.reserveFolderCreation(grantId)) {
         throw new Error("folder creation rate limit reached");
       }
       return;
     }
+    const now = Math.floor(uptime() * 1000);
     const recent = (this.#folderCreateTimes.get(grantId) ?? []).filter((time) => time > now - MINUTE_MS);
     if (recent.length >= FOLDER_CREATES_PER_MINUTE) throw new Error("folder creation rate limit reached");
     this.#folderCreateTimes.set(grantId, [...recent, now]);

@@ -105,7 +105,7 @@ export interface DownloadAttachmentResult {
 export interface MailboxProvider {
   grant: MailboxGrantDescriptor;
   listFolders(): Promise<MailFolder[]>;
-  ensureFolder?(folder: string): Promise<void>;
+  ensureFolder?(folder: string): Promise<string>;
   search(input: SearchMailInput): Promise<MailMessageSummary[]>;
   read(input: ReadMailInput): Promise<MailMessageDetail>;
   send?(input: SendMailInput): Promise<SendMailResult>;

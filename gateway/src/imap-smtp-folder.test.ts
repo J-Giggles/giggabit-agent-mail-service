@@ -1,6 +1,7 @@
 import { ImapFlow, type ListResponse } from "imapflow";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { HostMailGateway } from "./gateway.js";
 import { ImapSmtpProvider } from "./imap-smtp-provider.js";
 
 function mailbox(path: string, ...flags: string[]): ListResponse {
@@ -37,9 +38,44 @@ describe("IMAP folder creation", () => {
     list.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValue([mailbox(path)]);
     create.mockResolvedValueOnce({ path, created: true }).mockRejectedValueOnce(new Error("generic CREATE error"));
 
-    await Promise.all([provider.ensureFolder("Finance/Receipts"), provider.ensureFolder("Finance/Receipts")]);
-    await provider.ensureFolder("Finance/Receipts");
+    const gateway = new HostMailGateway({ providers: [provider], audit: () => undefined });
+    const principal = { tokenId: "test", runId: "test", nodeId: "synthetic", expiresAt: "" };
+    const input = { action: "create", grant_id: "synthetic", folder: "Finance/Receipts" };
+    const results = await Promise.all([
+      gateway.callTool(principal, "folders", input), gateway.callTool(principal, "folders", input),
+    ]);
+    expect(results).toEqual([ { ...input, folder: path }, { ...input, folder: path } ]);
+    await expect(provider.ensureFolder("Finance/Receipts")).resolves.toBe(path);
     expect(create.mock.calls).toEqual([[path], [path]]);
+
+    const lock = vi.spyOn(ImapFlow.prototype, "getMailboxLock").mockResolvedValue({ path, release: () => undefined });
+    vi.spyOn(ImapFlow.prototype, "search").mockResolvedValue([]);
+    await gateway.callTool(principal, "messages", {
+      action: "search", grant_id: "synthetic", folder: results[0]?.folder,
+    });
+    expect(lock).toHaveBeenCalledWith(path, { readOnly: true });
+  });
+
+  it("matches the wire name when LIST strips a leading personal delimiter", async () => {
+    const { provider, list, create } = imapProvider({ prefix: "/mail/", delimiter: "/" });
+    const path = "/mail/Archive";
+    list.mockResolvedValueOnce([]).mockResolvedValue([{
+      ...mailbox("mail/Archive"), pathAsListed: path, delimiter: "/",
+    }]);
+    create.mockRejectedValue(new Error("generic CREATE error"));
+
+    await expect(provider.ensureFolder("Archive")).resolves.toBe(path);
+    await expect(provider.ensureFolder(path)).resolves.toBe(path);
+    expect(create.mock.calls).toEqual([[path]]);
+  });
+
+  it("refuses a trailing native delimiter before CREATE", async () => {
+    const { provider, list, create } = imapProvider({ prefix: "INBOX.", delimiter: "." });
+    list.mockResolvedValue([]);
+    create.mockResolvedValue({ path: "INBOX.Reports.", created: true });
+
+    await expect(provider.ensureFolder("Reports.")).rejects.toThrow("trailing hierarchy delimiter");
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("refuses nested paths on servers without a hierarchy delimiter", async () => {

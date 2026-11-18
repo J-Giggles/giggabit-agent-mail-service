@@ -69,7 +69,7 @@ export class ProviderVerificationHarness {
       expiresAt: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
     };
     const grantId = this.#provider.grant.grantId;
-    await ensureFolder(TEST_FOLDER);
+    const testFolder = await ensureFolder(TEST_FOLDER);
     await ensureFolder("Drafts");
     await ensureFolder("Trash");
 
@@ -130,20 +130,20 @@ export class ProviderVerificationHarness {
         grant_id: grantId,
         folder: "INBOX",
         message_ref: detail.messageRef,
-        destination: TEST_FOLDER,
+        destination: testFolder,
       });
       providerIdentifiers.push(String(movedMessage.message_ref));
       moved += 1;
     }
-    const movedMessages = await this.#waitFor(TEST_FOLDER, tag, inboxMessages.length);
+    const movedMessages = await this.#waitFor(testFolder, tag, inboxMessages.length);
     for (const message of movedMessages) {
-      const detail = await this.#provider.read({ folder: TEST_FOLDER, messageRef: message.messageRef });
+      const detail = await this.#provider.read({ folder: testFolder, messageRef: message.messageRef });
       read += 1;
       proveOwnership(detail, tag);
       const trashedMessage = await gateway.callTool(principal, "messages", {
         action: "trash",
         grant_id: grantId,
-        folder: TEST_FOLDER,
+        folder: testFolder,
         message_ref: detail.messageRef,
       });
       providerIdentifiers.push(String(trashedMessage.message_ref));

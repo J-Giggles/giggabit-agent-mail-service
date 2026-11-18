@@ -15,15 +15,21 @@ afterEach(async () => {
 });
 
 describe("persistent outbound safety state", () => {
-  it("preserves the per-grant folder creation window across a gateway restart", async () => {
+  it("uses elapsed time across service restarts and starts a new window on host reboot", async () => {
     const directory = await mkdtemp(join(tmpdir(), "mail-folder-limit-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "state.sqlite");
     let now = Date.parse("2026-07-11T10:00:00.000Z");
+    let elapsedMs = 5_000;
+    let bootId = "test-boot-one";
+    const hostClock = () => ({ bootId, elapsedMs });
     let writes = 0;
     const provider: MailboxProvider = {
       grant: { grantId: "mailbox-1", label: "Synthetic", provider: "fake" },
-      ensureFolder: async () => { writes += 1; },
+      ensureFolder: async (folder) => {
+        writes += 1;
+        return folder;
+      },
       listFolders: async () => [],
       search: async () => [],
       read: async () => { throw new Error("not used"); },
@@ -36,7 +42,7 @@ describe("persistent outbound safety state", () => {
     const create = (gateway: HostMailGateway) => gateway.callTool(principal, "folders", {
       action: "create", grant_id: "mailbox-1", folder: "Finance/Receipts",
     });
-    const before = new SqliteMailCircuitStateStore(path);
+    const before = new SqliteMailCircuitStateStore(path, hostClock);
     try {
       const gateway = connect(before);
       for (let count = 0; count < 10; count += 1) await create(gateway);
@@ -44,16 +50,29 @@ describe("persistent outbound safety state", () => {
       before.close();
     }
 
-    const after = new SqliteMailCircuitStateStore(path);
+    const after = new SqliteMailCircuitStateStore(path, hostClock);
     try {
       const gateway = connect(after);
+      now += 3_600_000;
+      await expect(create(gateway)).rejects.toThrow("folder creation rate limit reached");
+      now -= 7_200_000;
+      elapsedMs += 59_999;
       await expect(create(gateway)).rejects.toThrow("folder creation rate limit reached");
       expect(writes).toBe(10);
-      now += 60_000;
-      await expect(create(gateway)).resolves.toMatchObject({ action: "create" });
-      expect(writes).toBe(11);
+      elapsedMs += 1;
+      for (let count = 0; count < 10; count += 1) await create(gateway);
+      expect(writes).toBe(20);
     } finally {
       after.close();
+    }
+    bootId = "test-boot-two";
+    elapsedMs = 5;
+    const rebooted = new SqliteMailCircuitStateStore(path, hostClock);
+    try {
+      await expect(create(connect(rebooted))).resolves.toMatchObject({ action: "create" });
+      expect(writes).toBe(21);
+    } finally {
+      rebooted.close();
     }
   });
 
