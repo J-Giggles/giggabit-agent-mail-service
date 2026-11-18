@@ -175,7 +175,7 @@ describe("IMAP folder creation", () => {
     list.mockResolvedValue([{ ...mailbox("Archive"), pathAsListed: "/Archive" }]);
     create.mockResolvedValue({ path: "Archive", created: true });
 
-    await expect(provider.ensureFolder("Archive")).resolves.toBe("Archive");
+    await expect(provider.ensureFolder("Archive")).rejects.toThrow("The server did not confirm folder creation.");
     expect(create).toHaveBeenCalledWith("Archive");
   });
 
@@ -194,7 +194,7 @@ describe("IMAP folder creation", () => {
       { prefix: "", delimiter: "." },
       [{ prefix: Buffer.from(""), delimiter: "/" }],
     );
-    list.mockResolvedValue([]);
+    list.mockResolvedValueOnce([]).mockResolvedValue([mailbox("Archive")]);
     create.mockResolvedValue({ path: "Archive", created: true });
 
     await expect(provider.ensureFolder("Archive")).resolves.toBe("Archive");
@@ -249,7 +249,7 @@ describe("IMAP folder creation", () => {
   it("keeps a dot literal inside a segment on a slash-delimited server", async () => {
     const { provider, list, create } = imapProvider({ prefix: "", delimiter: "/" });
     const path = "Finance.Receipts";
-    list.mockResolvedValue([]);
+    list.mockResolvedValueOnce([]).mockResolvedValue([mailbox(path)]);
     create.mockResolvedValue({ path, created: true });
 
     await expect(provider.ensureFolder(path)).resolves.toBe(path);
@@ -378,11 +378,11 @@ describe("IMAP folder creation", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
-  it("requires a selectable mailbox when CREATE says it already exists", async () => {
+  it.each([true, false])("requires a selectable mailbox after CREATE reports created=%s", async (created) => {
     const { provider, list, create } = imapProvider(supported);
     const path = "Archive/2021";
     list.mockResolvedValue([mailbox(path, "\\NonExistent")]);
-    create.mockResolvedValue({ path, created: false });
+    create.mockResolvedValue({ path, created });
 
     await expect(provider.ensureFolder("Archive/2021")).rejects.toThrow("The server did not confirm folder creation.");
     expect(create).toHaveBeenCalledWith(path);

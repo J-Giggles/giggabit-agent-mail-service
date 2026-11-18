@@ -439,9 +439,9 @@ export class ImapSmtpProvider implements MailboxProvider {
         throw new FolderCreateRefusal("invalidPath");
       }
       try {
-        if ((await client.mailboxCreate(path))?.created) return path;
+        await client.mailboxCreate(path);
       } catch {
-        // Recover from uncoded failures using only mailbox names, never server error text.
+        // Confirm success or recover from a racing CREATE using LIST.
       }
       let afterCreate: string[];
       try {
@@ -449,7 +449,8 @@ export class ImapSmtpProvider implements MailboxProvider {
       } catch {
         throw new FolderCreateRefusal("creationUnconfirmed");
       }
-      if (afterCreate.includes(path)) return path;
+      const confirmedPath = afterCreate.find((name) => name === path);
+      if (confirmedPath !== undefined) return confirmedPath;
       if (afterCreate.some((name) => asciiFold(name) === foldedPath)) {
         throw new FolderCreateRefusal("unconfirmedPath");
       }

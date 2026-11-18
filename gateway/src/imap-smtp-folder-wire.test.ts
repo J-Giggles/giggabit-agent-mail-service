@@ -8,12 +8,13 @@ async function withImapFixture(
   namespace: string,
   mailbox: string,
   verify: (provider: ImapSmtpProvider, listCommands: Buffer[], mutations: string[]) => Promise<void>,
+  createdName?: string,
 ) {
   const sockets = new Set<Socket>();
   const listCommands: Buffer[] = [];
   const mutations: string[] = [];
-  const quotedMailbox = JSON.stringify(mailbox);
-  const exactList = Buffer.from(`LIST "" ${quotedMailbox}\r\n`);
+  const quotedListedName = JSON.stringify(createdName ?? mailbox);
+  const exactList = Buffer.from(`LIST "" ${JSON.stringify(mailbox)}\r\n`);
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.once("close", () => { sockets.delete(socket); });
@@ -43,14 +44,16 @@ async function withImapFixture(
           case "LIST":
             listCommands.push(command);
             if (mutations.includes("CREATE") && command.equals(exactList)) {
-              socket.write(`* LIST () "/" ${quotedMailbox}\r\n`);
+              socket.write(`* LIST () "/" ${quotedListedName}\r\n`);
             }
             socket.write(`${tag} OK LIST\r\n`);
             break;
-          case "CREATE":
+          case "CREATE": {
+            const succeeds = createdName !== undefined && !mutations.includes("CREATE");
             mutations.push(verb);
-            socket.write(`${tag} NO [ALREADYEXISTS] Mailbox already exists\r\n`);
+            socket.write(succeeds ? `${tag} OK CREATE\r\n` : `${tag} NO [ALREADYEXISTS] Mailbox already exists\r\n`);
             break;
+          }
           case "SUBSCRIBE":
             mutations.push(verb);
             socket.write(`${tag} OK SUBSCRIBE\r\n`);
@@ -95,6 +98,18 @@ it("sends a quoted reference and exact quoted mailbox name on the IMAP wire", as
     expect(mutations).toEqual(["CREATE"]);
     expect(listCommands).toEqual([expected, expected, expected]);
   });
+});
+
+it("refuses a case-normalized path after successful CREATE and on identical retry", async () => {
+  const requested = "finance/Receipts";
+  const expected = Buffer.from('LIST "" "finance/Receipts"\r\n');
+  await withImapFixture('(("" "/")) NIL NIL', requested, async (provider, listCommands, mutations) => {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(provider.ensureFolder(requested)).rejects.toThrow("Use the exact path from folders.list");
+    }
+    expect(listCommands).toEqual([expected, expected, expected, expected]);
+    expect(mutations).toEqual(["CREATE", "SUBSCRIBE", "CREATE"]);
+  }, "Finance/Receipts");
 });
 
 it("refuses a namespace extension without a value list before issuing IMAP mutations", async () => {
