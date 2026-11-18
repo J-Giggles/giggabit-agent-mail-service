@@ -1,6 +1,9 @@
 const folderCreateRefusals = {
   unsupportedNamespace: "Unsupported IMAP personal namespace.",
-  unconfirmedPath: "The server reported an existing mailbox without an exact selectable folder match. Use the exact path from folders.list.",
+  invalidPath: "Use slash only as a folder separator and supply valid namespace-relative segments.",
+  trailingDelimiter: "The folder name has a trailing hierarchy delimiter.",
+  unconfirmedPath: "A selectable mailbox has a different spelling. Use the exact path from folders.list.",
+  creationUnconfirmed: "The server did not confirm folder creation. Check folders.list before retrying.",
 };
 
 export class FolderCreateRefusal extends Error {

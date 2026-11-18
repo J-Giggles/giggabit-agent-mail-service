@@ -216,24 +216,25 @@ async function listMailboxes(client: ImapFlow): Promise<ListResponse[]> {
   });
 }
 
-const nameToken = z.object({ value: z.string() }).transform((token) => token.value);
+const nameToken = z.object({ value: z.union([z.string(), z.instanceof(Buffer)]) }).transform((token) => token.value);
 const namespaceEntry = z.tuple([nameToken, nameToken]).rest(z.unknown());
 const namespaceReply = z.object({
   attributes: z.tuple([z.tuple([namespaceEntry]), z.unknown(), z.unknown()]),
 });
-const rootListReply = z.object({
-  attributes: z.tuple([z.unknown(), nameToken, nameToken]).rest(z.unknown()),
-});
+const folderSegment = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,62}$/;
+const isFolderSegment = (segment: string) => folderSegment.test(segment) && !segment.endsWith(" ");
+const asciiFold = (name: string) => name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 
 // ImapFlow normalizes prefixes during connect. Check the unmodified server reply before CREATE.
 async function folderCreateNamespace(client: ImapFlow): Promise<{ prefix: string; delimiter: string }> {
   const exec = "exec" in client ? client.exec : undefined;
-  if (typeof exec !== "function") throw new FolderCreateRefusal("unsupportedNamespace");
-  const command = client.capabilities.has("NAMESPACE") ? "NAMESPACE" : "LIST";
+  if (typeof exec !== "function" || !client.capabilities.has("NAMESPACE")) {
+    throw new FolderCreateRefusal("unsupportedNamespace");
+  }
   const replies: unknown[] = [];
   try {
-    const response: unknown = await exec.call(client, command, command === "NAMESPACE" ? false : ["", ""], {
-      untagged: { [command]: async (reply: unknown) => { replies.push(reply); } },
+    const response: unknown = await exec.call(client, "NAMESPACE", false, {
+      untagged: { NAMESPACE: async (reply: unknown) => { replies.push(reply); } },
     });
     if (!response || typeof response !== "object" || !("next" in response) || typeof response.next !== "function") {
       throw new FolderCreateRefusal("unsupportedNamespace");
@@ -244,27 +245,60 @@ async function folderCreateNamespace(client: ImapFlow): Promise<{ prefix: string
   }
   if (replies.length !== 1) throw new FolderCreateRefusal("unsupportedNamespace");
 
-  let prefix: string;
-  let delimiter: string;
-  if (command === "NAMESPACE") {
-    const parsed = namespaceReply.safeParse(replies[0]);
-    if (!parsed.success) throw new FolderCreateRefusal("unsupportedNamespace");
-    [prefix, delimiter] = parsed.data.attributes[0][0];
-  } else {
-    const parsed = rootListReply.safeParse(replies[0]);
-    if (!parsed.success) throw new FolderCreateRefusal("unsupportedNamespace");
-    [, delimiter, prefix] = parsed.data.attributes;
-  }
+  const parsed = namespaceReply.safeParse(replies[0]);
+  if (!parsed.success) throw new FolderCreateRefusal("unsupportedNamespace");
+  const [wirePrefix, wireDelimiter] = parsed.data.attributes[0][0];
+  const prefix = typeof wirePrefix === "string" ? wirePrefix : wirePrefix.toString("utf8");
+  const delimiter = typeof wireDelimiter === "string" ? wireDelimiter : wireDelimiter.toString("utf8");
 
   const validPrefix = !prefix ||
-    (!prefix.startsWith(delimiter) && prefix.endsWith(delimiter) && !prefix.endsWith(delimiter + delimiter));
+    (/^[\x20-\x7e]+$/.test(prefix) && !prefix.includes("&") && !prefix.startsWith(delimiter) &&
+      prefix.endsWith(delimiter) && !prefix.endsWith(delimiter + delimiter));
   const activeNamespace = "namespace" in client ? client.namespace : undefined;
   if (Array.from(delimiter).length !== 1 || !validPrefix || !activeNamespace ||
-    typeof activeNamespace !== "object" || !("prefix" in activeNamespace) || !("delimiter" in activeNamespace) ||
-    activeNamespace.prefix !== prefix || activeNamespace.delimiter !== delimiter) {
+    typeof activeNamespace !== "object" || !("prefix" in activeNamespace) || !("delimiter" in activeNamespace)) {
     throw new FolderCreateRefusal("unsupportedNamespace");
   }
+  if (activeNamespace.prefix !== prefix || activeNamespace.delimiter !== delimiter) {
+    // Both pinned ImapFlow versions can omit a valid literal from the active namespace.
+    if ((!Buffer.isBuffer(wirePrefix) && !Buffer.isBuffer(wireDelimiter)) || activeNamespace.prefix !== "") {
+      throw new FolderCreateRefusal("unsupportedNamespace");
+    }
+    Object.assign(activeNamespace, { prefix, delimiter });
+  }
   return { prefix, delimiter };
+}
+
+// ImapFlow's decoded path can drop a leading delimiter. Decode the raw LIST name without path normalization.
+function decodeListedName(name: string, utf8: boolean): string | undefined {
+  if (utf8 || !name.includes("&")) return name;
+  if (/&(?![A-Za-z0-9+,]*-)/.test(name)) return undefined;
+  const decoder = new TextDecoder("utf-16be", { fatal: true, ignoreBOM: true });
+  try {
+    return name.replace(/&([A-Za-z0-9+,]*)-/g, (_, token: string) => {
+      if (!token) return "&";
+      const base64 = token.replaceAll(",", "/");
+      const bytes = Buffer.from(base64, "base64");
+      const decoded = decoder.decode(bytes);
+      if (bytes.toString("base64").replace(/=+$/, "") !== base64 || !decoded || /[\x20-\x7e]/.test(decoded)) {
+        throw new Error("invalid modified UTF-7 mailbox name");
+      }
+      return decoded;
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+async function listedMailboxNames(client: ImapFlow) {
+  const utf8 = client.enabled.has("UTF8=ACCEPT");
+  return (await listMailboxes(client))
+    .filter((item) => item.listed)
+    .flatMap((item) => {
+      const name = decodeListedName(item.pathAsListed, utf8);
+      const selectable = ![...item.flags].some((flag) => ["\\nonexistent", "\\noselect"].includes(asciiFold(flag)));
+      return name === undefined ? [] : [{ name, selectable }];
+    });
 }
 
 async function findFolder(client: ImapFlow, role: MailFolder["role"], fallback: string): Promise<string> {
@@ -330,33 +364,38 @@ export class ImapSmtpProvider implements MailboxProvider {
   }
 
   async ensureFolder(folder: string): Promise<string> {
-    if (!folder.trim()) throw new Error("mail folder name is required");
+    const segments = folder.split("/");
+    if (!segments.every(isFolderSegment)) throw new FolderCreateRefusal("invalidPath");
     return this.#withImap(async (client) => {
       const { prefix, delimiter } = await folderCreateNamespace(client);
-      if (folder.endsWith(delimiter)) throw new Error("mail folder has a trailing hierarchy delimiter");
-      const segments = folder.split("/");
-      if (segments.some((segment) => !segment.trim())) throw new Error("invalid mail folder path");
-      const name = segments.join(delimiter);
-      let path = name.startsWith(prefix) ? name : prefix + name;
-      if (name.toUpperCase() === "INBOX") path = "INBOX";
-
-      const exists = async () => (await listMailboxes(client)).some((item) =>
-        item.path === path && item.listed && ![...item.flags].some((flag) =>
-          ["\\nonexistent", "\\noselect"].includes(flag.toLowerCase()),
-        ),
-      );
-      if (await exists()) return path;
-      let result: Awaited<ReturnType<ImapFlow["mailboxCreate"]>>;
-      try {
-        result = await client.mailboxCreate(path);
-      } catch (error) {
-        // Some servers report only a generic error when another request wins CREATE.
-        if (await exists()) return path;
-        throw error;
+      const inbox = asciiFold(folder) === "inbox";
+      const path = inbox ? "INBOX" : prefix + segments.join(delimiter);
+      if (segments.includes(delimiter) || (!inbox && path.toUpperCase() === "INBOX")) {
+        throw new FolderCreateRefusal("invalidPath");
       }
-      if (result?.created || await exists()) return path;
-      if (result?.created === false) throw new FolderCreateRefusal("unconfirmedPath");
-      throw new Error("mailbox creation did not produce a selectable folder");
+      if (!inbox && path.endsWith(delimiter)) throw new FolderCreateRefusal("trailingDelimiter");
+
+      const listed = await listedMailboxNames(client);
+      if (folder !== path && delimiter !== "/" && folder.includes("/") && listed.some((item) => item.name === folder)) {
+        throw new FolderCreateRefusal("invalidPath");
+      }
+      if (listed.some((item) => item.selectable && item.name === path)) return path;
+      try {
+        if ((await client.mailboxCreate(path))?.created) return path;
+      } catch {
+        // Recover from uncoded failures using only mailbox names, never server error text.
+      }
+      let afterCreate: string[];
+      try {
+        afterCreate = (await listedMailboxNames(client)).filter((item) => item.selectable).map((item) => item.name);
+      } catch {
+        throw new FolderCreateRefusal("creationUnconfirmed");
+      }
+      if (afterCreate.includes(path)) return path;
+      if (afterCreate.some((name) => asciiFold(name) === asciiFold(path))) {
+        throw new FolderCreateRefusal("unconfirmedPath");
+      }
+      throw new FolderCreateRefusal("creationUnconfirmed");
     });
   }
 
