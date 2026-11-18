@@ -33,6 +33,10 @@ provider credentials, the vault key, host paths, or plaintext magic links.
   `Finance/Receipts`. Creating an existing folder succeeds and returns its
   provider path for use in later mailbox operations. Each mailbox grant allows
   up to 10 folder creation requests per elapsed minute across service restarts.
+  Creation requires one personal namespace with a single-character delimiter.
+  A nonempty prefix must end in exactly one delimiter and begin with another
+  character. If the server reports an existing folder with a different
+  spelling, use the exact path returned by `folders.list`.
 - `messages`: search, read, move, and recoverably trash.
 - `send`: draft, send, and reply with idempotency and volume controls.
 - `attachments`: quarantine, scan, and inspect eligible text in a sandbox.
